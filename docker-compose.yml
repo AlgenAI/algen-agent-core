@@ -1,0 +1,23 @@
+services:
+  agent-core:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      AGENT_CORE_CONFIG: /config/agent-core.yaml
+    volumes:
+      - ./examples/minimal_agent/agent.yaml:/config/agent-core.yaml:ro
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agentcore
+      POSTGRES_PASSWORD: local-only
+      POSTGRES_DB: agentcore
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+

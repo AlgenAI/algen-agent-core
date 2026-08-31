@@ -1,0 +1,19 @@
+providers:
+  openai:
+    type: openai
+    api_key: env://OPENAI_API_KEY
+    default_model: gpt-5
+agents:
+  - name: research
+    version: 1.0.0
+    description: Evidence-oriented research agent using configured retrieval and HTTP tools
+    capabilities: [research, citations]
+    system_instructions: Synthesize supplied evidence, cite its source identifiers, and separate fact from inference.
+    default_model: {name: primary, provider: openai, model: gpt-5, required_capabilities: [chat, tools]}
+    enabled_tools: [core.http]
+    tool_permissions: [network.http]
+    context_builder: default
+    planning_strategy: react
+    guardrail_policy: {policies: [secrets, authorization, side_effects], require_citations: true}
+    max_steps: 12
+

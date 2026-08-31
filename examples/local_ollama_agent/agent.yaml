@@ -1,0 +1,15 @@
+providers:
+  ollama:
+    type: ollama
+    base_url: http://127.0.0.1:11434/v1
+    default_model: qwen3:8b
+agents:
+  - name: local-private
+    version: 1.0.0
+    description: Cloud-free local knowledge assistant
+    system_instructions: Use only locally supplied context.
+    default_model: {name: local, provider: ollama, model: "qwen3:8b", required_capabilities: [chat]}
+    model_allowlist: ["ollama/qwen3:8b"]
+    planning_strategy: direct
+    max_steps: 4
+

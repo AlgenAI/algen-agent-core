@@ -1,0 +1,57 @@
+providers:
+  openai:
+    type: openai
+    api_key: env://OPENAI_API_KEY
+    default_model: gpt-5
+    capabilities: {chat: true, streaming: true, tools: true, structured_output: true, json_schema: true, embeddings: true, images: true, files: true}
+  azure:
+    type: azure_openai
+    base_url: https://YOUR-RESOURCE.openai.azure.com
+    api_key: env://AZURE_OPENAI_API_KEY
+    api_version: "2024-10-21"
+    default_model: YOUR-DEPLOYMENT
+  anthropic:
+    type: anthropic
+    api_key: env://ANTHROPIC_API_KEY
+    default_model: claude-sonnet-4-5
+  deepseek:
+    type: deepseek
+    api_key: env://DEEPSEEK_API_KEY
+    default_model: deepseek-chat
+  ollama:
+    type: ollama
+    base_url: http://127.0.0.1:11434/v1
+    default_model: qwen3:8b
+  huggingface:
+    type: huggingface_inference
+    api_key: env://HF_TOKEN
+    default_model: meta-llama/Llama-3.1-8B-Instruct
+  compatible:
+    type: openai_compatible
+    base_url: https://llm.example.invalid/v1
+    api_key: env://COMPATIBLE_API_KEY
+    default_model: enterprise-chat
+    capabilities:
+      chat: true
+      streaming: true
+      tools: false
+      structured_output: false
+      json_schema: false
+      embeddings: false
+      images: false
+      files: false
+storage:
+  run_store: memory
+  memory_store: memory
+  artifact_store: memory
+telemetry:
+  enabled: true
+  service_name: agent-core
+  include_content: false
+security:
+  max_request_bytes: 1048576
+  max_artifact_bytes: 10485760
+  allowed_http_hosts: [api.example.com]
+  allow_private_networks: false
+  allow_subprocess_tools: false
+

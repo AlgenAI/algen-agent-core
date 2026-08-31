@@ -1,0 +1,15 @@
+providers:
+  local:
+    type: ollama
+    base_url: http://127.0.0.1:11434/v1
+    default_model: llama3.2
+    capabilities: {chat: true, streaming: true, tools: true, structured_output: true, json_schema: true, embeddings: true, images: false, files: false}
+agents:
+  - name: minimal
+    version: 1.0.0
+    description: General-purpose minimal assistant
+    system_instructions: Answer accurately and concisely. State uncertainty.
+    default_model: {name: local-default, provider: ollama, model: llama3.2, required_capabilities: [chat]}
+    planning_strategy: direct
+    max_steps: 4
+
