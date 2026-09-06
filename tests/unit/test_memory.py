@@ -1,5 +1,5 @@
-from agent_core.persistence.memory import InMemoryMemoryStore
-from agent_core.types.contracts import Message, Role
+from traccia_runtime.persistence.memory import InMemoryMemoryStore
+from traccia_runtime.types.contracts import Message, Role
 
 
 async def test_memory_is_tenant_isolated() -> None:

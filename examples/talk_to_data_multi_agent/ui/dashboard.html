@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Talk to Data · Traccia</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17221d; --muted: #68736d; --line: #dfe5e1; --soft: #f3f6f4;
+      --paper: #fbfcfb; --panel: #fff; --brand: #176b4d; --brand-dark: #0d4f38;
+      --accent: #daf2e6; --danger: #a33a3a; --shadow: 0 14px 42px rgba(25, 47, 37, .10);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    button, textarea, input { font: inherit; }
+    button { cursor: pointer; }
+    .app { min-height: 100vh; display: grid; grid-template-columns: 270px 1fr; }
+    .sidebar { padding: 20px 14px; border-right: 1px solid var(--line); background: #f0f4f1; display: flex; flex-direction: column; min-height: 100vh; }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 20px; font-weight: 760; letter-spacing: -.02em; }
+    .mark { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 9px; background: var(--brand); color: white; font-weight: 800; }
+    .new-chat { width: 100%; border: 1px solid #b9c9c0; background: white; color: var(--ink); border-radius: 12px; padding: 10px 13px; text-align: left; font-weight: 650; }
+    .new-chat:hover { border-color: var(--brand); }
+    .section-label { margin: 22px 9px 8px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; font-weight: 750; }
+    .history { display: grid; gap: 4px; overflow: auto; }
+    .history button { border: 0; background: transparent; border-radius: 9px; padding: 9px 10px; text-align: left; color: #354039; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .history button:hover, .history button.active { background: #dde8e1; color: #102a1f; }
+    .sidebar-footer { margin-top: auto; padding: 12px 8px 2px; color: var(--muted); font-size: 12px; }
+    .main { min-width: 0; display: grid; grid-template-rows: 62px 1fr auto; height: 100vh; }
+    header { border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: rgba(251,252,251,.92); backdrop-filter: blur(10px); }
+    header h1 { margin: 0; font-size: 16px; font-weight: 680; }
+    .header-actions { display: flex; align-items: center; gap: 10px; }
+    .status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #aab3ae; }
+    .dot.online { background: #28a06a; box-shadow: 0 0 0 3px #dff4e9; }
+    .icon-button { border: 1px solid var(--line); background: white; border-radius: 9px; padding: 7px 10px; color: #435048; }
+    .messages { overflow-y: auto; padding: 34px max(24px, calc((100% - 860px)/2)); scroll-behavior: smooth; }
+    .welcome { max-width: 720px; margin: 11vh auto 0; text-align: center; }
+    .welcome .orb { width: 50px; height: 50px; margin: auto; display: grid; place-items: center; border-radius: 15px; background: var(--accent); color: var(--brand-dark); font-size: 22px; }
+    .welcome h2 { margin: 17px 0 7px; font-size: clamp(25px, 4vw, 38px); letter-spacing: -.04em; line-height: 1.1; }
+    .welcome p { margin: 0 auto 28px; max-width: 560px; color: var(--muted); }
+    .suggestions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: left; }
+    .suggestion { border: 1px solid var(--line); border-radius: 13px; background: white; padding: 13px 15px; color: #29372f; min-height: 66px; }
+    .suggestion:hover { border-color: #8ab8a2; box-shadow: 0 5px 18px rgba(31,80,58,.07); }
+    .message { margin: 0 0 26px; display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 13px; }
+    .avatar { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-size: 12px; font-weight: 780; background: #e5eae7; }
+    .message.assistant .avatar { background: var(--brand); color: white; }
+    .message-body { min-width: 0; padding-top: 3px; }
+    .message-body > :first-child { margin-top: 0; }
+    .message-body > :last-child { margin-bottom: 0; }
+    .block { margin: 0 0 14px; white-space: pre-wrap; }
+    .clarification { border-left: 3px solid #cc942a; padding-left: 13px; }
+    .code-card, .table-card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: white; margin: 14px 0; }
+    .card-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 650; }
+    .card-head button { border: 0; background: transparent; color: var(--brand); padding: 2px 5px; }
+    pre { margin: 0; padding: 15px; overflow: auto; color: #dcebe3; background: #15251d; font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+    .table-scroll { overflow: auto; max-height: 390px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { position: sticky; top: 0; background: #f6f8f7; text-align: left; color: #4d5b53; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid #edf0ee; white-space: nowrap; }
+    .notice { margin: 12px 0; padding: 10px 12px; border-radius: 9px; background: #eef5f1; color: #476057; font-size: 13px; }
+    .notice.warning, .notice.error { background: #fff3dc; color: #795719; }
+    .bars { margin: 14px 0; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+    .bar-row { display: grid; grid-template-columns: minmax(90px, 1fr) 3fr auto; gap: 9px; align-items: center; margin: 8px 0; font-size: 12px; }
+    .bar-track { height: 9px; border-radius: 99px; background: #e7ede9; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: inherit; background: var(--brand); }
+    .thinking { display: flex; gap: 5px; padding: 8px 0; }
+    .thinking i { width: 7px; height: 7px; border-radius: 50%; background: #7e9c8d; animation: pulse 1.2s infinite; }
+    .thinking i:nth-child(2) { animation-delay: .18s; } .thinking i:nth-child(3) { animation-delay: .36s; }
+    .response-meta { margin-top: 12px; color: var(--muted); font-size: 12px; }
+    .execution-details { margin-top: 10px; border: 1px solid var(--line); border-radius: 11px; background: #f8faf9; overflow: hidden; }
+    .execution-details summary { padding: 10px 12px; cursor: pointer; color: #405149; font-size: 12px; font-weight: 700; }
+    .progress-list { display: grid; gap: 0; padding: 0 12px 10px; }
+    .progress-step { position: relative; padding: 7px 8px 7px 25px; color: var(--muted); font-size: 12px; }
+    .progress-step::before { content: ''; position: absolute; left: 5px; top: 13px; width: 8px; height: 8px; border-radius: 50%; background: #a8b4ad; }
+    .progress-step.completed::before { background: var(--brand); }
+    .progress-step.started::before { background: #d09027; box-shadow: 0 0 0 4px #f8ead1; }
+    .progress-step.waiting::before { background: #d09027; }
+    .progress-step.failed::before, .progress-step.blocked::before { background: var(--danger); }
+    .progress-label { display: block; color: #34443b; font-weight: 680; }
+    .progress-description { display: block; margin-top: 1px; }
+    .live-progress { margin: 2px 0 8px; border-left: 2px solid #b7d8c7; }
+    @keyframes pulse { 0%, 80%, 100% { opacity: .25; transform: scale(.85); } 40% { opacity: 1; transform: scale(1); } }
+    .composer-wrap { padding: 12px max(20px, calc((100% - 860px)/2)) 22px; background: linear-gradient(transparent, var(--paper) 18%); }
+    .composer { border: 1px solid #cbd5cf; background: white; border-radius: 17px; padding: 11px 11px 9px 15px; box-shadow: var(--shadow); }
+    textarea { display: block; resize: none; width: 100%; min-height: 28px; max-height: 150px; border: 0; outline: 0; color: var(--ink); background: transparent; }
+    .composer-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+    .hint { color: #8a948e; font-size: 11px; }
+    .send { border: 0; width: 35px; height: 35px; border-radius: 10px; background: var(--brand); color: white; font-weight: 800; }
+    .send:disabled { background: #aeb9b3; cursor: not-allowed; }
+    .cancel { display: none; border: 1px solid #d7b8b8; color: var(--danger); background: #fff; border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+    dialog { border: 0; border-radius: 15px; width: min(440px, calc(100% - 32px)); box-shadow: 0 25px 90px rgba(0,0,0,.2); padding: 0; }
+    dialog::backdrop { background: rgba(15,28,21,.35); backdrop-filter: blur(2px); }
+    .settings { padding: 22px; }
+    .settings h2 { margin: 0 0 5px; font-size: 19px; }.settings p { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
+    label { display: block; margin: 12px 0 5px; font-size: 12px; font-weight: 700; }
+    input { width: 100%; border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; outline: 0; }
+    input:focus { border-color: var(--brand); }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+    .primary { border: 0; border-radius: 9px; padding: 8px 13px; background: var(--brand); color: white; }
+    .secondary { border: 1px solid var(--line); border-radius: 9px; padding: 8px 13px; background: white; }
+    .toast { position: fixed; right: 20px; bottom: 20px; max-width: 360px; border-radius: 10px; padding: 11px 14px; background: #26332c; color: white; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transform: translateY(8px); transition: .2s; }
+    .toast.show { opacity: 1; transform: none; }
+    .mobile-menu { display: none; }
+    @media (max-width: 760px) {
+      .app { grid-template-columns: 1fr; }.sidebar { display: none; }.main { height: 100dvh; }
+      .messages { padding: 24px 17px; }.composer-wrap { padding: 10px 13px 14px; }
+      .suggestions { grid-template-columns: 1fr; }.welcome { margin-top: 5vh; }
+      .mobile-menu { display: inline-block; } header { padding: 0 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="mark">T</span> Traccia <span style="color:#718078;font-weight:500">Runtime</span></div>
+      <button class="new-chat" id="newChat">＋&nbsp; New conversation</button>
+      <div class="section-label">Recent</div>
+      <nav class="history" id="history"></nav>
+      <div class="sidebar-footer">Talk to Data · PostgreSQL</div>
+    </aside>
+
+    <main class="main">
+      <header>
+        <h1><button class="icon-button mobile-menu" aria-label="New conversation" id="mobileNew">＋</button> Talk to Data</h1>
+        <div class="header-actions">
+          <span class="status"><span class="dot" id="statusDot"></span><span id="statusText">Checking</span></span>
+          <button class="cancel" id="cancel">Stop</button>
+          <button class="icon-button" id="openSettings" aria-label="Connection settings">Settings</button>
+        </div>
+      </header>
+
+      <section class="messages" id="messages" aria-live="polite">
+        <div class="welcome" id="welcome">
+          <div class="orb">⌁</div>
+          <h2>What would you like to know?</h2>
+          <p>Ask a business question in plain language. The agents will resolve the intent, consult the documented schema, and produce safe PostgreSQL.</p>
+          <div class="suggestions" id="suggestions"></div>
+        </div>
+      </section>
+
+      <div class="composer-wrap">
+        <form class="composer" id="composer">
+          <textarea id="prompt" rows="1" placeholder="Ask about fares, bookings, inventory, routes…" aria-label="Message"></textarea>
+          <div class="composer-row"><span class="hint">Enter to send · Shift + Enter for a new line</span><button class="send" id="send" type="submit" aria-label="Send">↑</button></div>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="settingsDialog">
+    <form class="settings" method="dialog" id="settingsForm">
+      <h2>Connection settings</h2>
+      <p>These development identity headers are stored only in this browser.</p>
+      <label for="apiBase">Runtime URL</label><input id="apiBase" placeholder="http://localhost:8090">
+      <label for="tenantId">Tenant ID</label><input id="tenantId" required>
+      <label for="userId">User ID</label><input id="userId" required>
+      <div class="dialog-actions"><button class="secondary" value="cancel">Cancel</button><button class="primary" value="default" id="saveSettings">Save</button></div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast" role="status"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const state = {
+      api: localStorage.getItem('traccia.talk-to-data.api') || location.origin,
+      tenant: localStorage.getItem('traccia.talk-to-data.tenant') || 'talk-to-data-example',
+      user: localStorage.getItem('traccia.talk-to-data.user') || 'dashboard-user',
+      conversationId: localStorage.getItem('traccia.talk-to-data.conversation') || null,
+      busy: false, stream: null, lastEventId: 0, pendingAssistantId: null,
+      progressSteps: []
+    };
+    const headers = (json = false) => ({
+      ...(json ? {'content-type': 'application/json'} : {}),
+      'x-tenant-id': state.tenant, 'x-user-id': state.user
+    });
+    const endpoint = (path) => state.api.replace(/\/$/, '') + path;
+
+    async function request(path, options = {}) {
+      const response = await fetch(endpoint(path), {...options, headers: {...headers(Boolean(options.body)), ...(options.headers || {})}});
+      if (!response.ok) {
+        let message = `${response.status} ${response.statusText}`;
+        try { message = (await response.json()).detail || message; } catch (_) {}
+        throw new Error(message);
+      }
+      return response.status === 204 ? null : response.json();
+    }
+
+    function toast(message) {
+      $('toast').textContent = message; $('toast').classList.add('show');
+      setTimeout(() => $('toast').classList.remove('show'), 3200);
+    }
+    function setOnline(online, label) {
+      $('statusDot').classList.toggle('online', online); $('statusText').textContent = label;
+    }
+    function setBusy(value, label = 'Working') {
+      state.busy = value; $('send').disabled = value; $('prompt').disabled = value;
+      $('cancel').style.display = value ? 'inline-block' : 'none';
+      setOnline(true, value ? label : 'Ready');
+    }
+
+    function element(tag, className, text) {
+      const node = document.createElement(tag); if (className) node.className = className;
+      if (text !== undefined) node.textContent = text; return node;
+    }
+    function renderMessage(message, temporary = false) {
+      $('welcome')?.remove();
+      const wrapper = element('article', `message ${message.role}`);
+      if (temporary) wrapper.id = 'pendingMessage';
+      wrapper.append(element('div', 'avatar', message.role === 'user' ? 'You' : 'T'));
+      const body = element('div', 'message-body');
+      if (message.metadata?.kind === 'clarification') body.classList.add('clarification');
+      for (const block of message.content || []) body.append(renderBlock(block));
+      if (message.status === 'accepted' || message.status === 'streaming') {
+        const progress = element('div', 'progress-list live-progress'); progress.id = 'pendingProgress'; progress.hidden = true; body.append(progress);
+        const thinking = element('div', 'thinking'); thinking.append(element('i'), element('i'), element('i')); body.append(thinking);
+      } else if (message.role === 'assistant') {
+        body.append(renderExecutionMetadata(message.metadata || {}));
+      }
+      wrapper.append(body); $('messages').append(wrapper); $('messages').scrollTop = $('messages').scrollHeight;
+    }
+    function renderBlock(block) {
+      if (block.type === 'text') return element('div', 'block', block.text);
+      if (block.type === 'notice') return element('div', `notice ${block.level || ''}`, block.text);
+      if (block.type === 'code') {
+        const card = element('div', 'code-card'), head = element('div', 'card-head');
+        head.append(element('span', '', block.title || block.language || 'Code'));
+        const copy = element('button', '', 'Copy'); copy.type = 'button'; copy.onclick = async () => { await navigator.clipboard.writeText(block.code); toast('SQL copied'); };
+        head.append(copy); const pre = element('pre', '', block.code); card.append(head, pre); return card;
+      }
+      if (block.type === 'table') {
+        const card = element('div', 'table-card'), head = element('div', 'card-head');
+        head.append(element('span', '', `${block.rows.length}${block.truncated ? '+' : ''} rows`));
+        const download = element('button', '', 'Download CSV'); download.type = 'button'; download.onclick = () => downloadCsv(block); head.append(download);
+        const scroll = element('div', 'table-scroll'), table = document.createElement('table'), tr = document.createElement('tr');
+        block.columns.forEach(column => tr.append(element('th', '', column))); const thead = document.createElement('thead'); thead.append(tr); table.append(thead);
+        const tbody = document.createElement('tbody'); block.rows.forEach(row => { const line = document.createElement('tr'); block.columns.forEach(column => line.append(element('td', '', formatValue(row[column])))); tbody.append(line); });
+        table.append(tbody); scroll.append(table); card.append(head, scroll); return card;
+      }
+      if (block.type === 'chart') return renderChart(block.specification);
+      return element('div', 'notice warning', `Unsupported content block: ${block.type}`);
+    }
+    function renderExecutionMetadata(metadata) {
+      const fragment = document.createDocumentFragment();
+      if (Number.isFinite(Number(metadata.response_time_ms))) {
+        fragment.append(element('div', 'response-meta', `Response time: ${formatDuration(Number(metadata.response_time_ms))}`));
+      }
+      const steps = Array.isArray(metadata.execution_steps) ? metadata.execution_steps : [];
+      if (steps.length) {
+        const details = element('details', 'execution-details'), summary = element('summary', '', 'How this response was prepared');
+        const list = element('div', 'progress-list'); steps.sort((a, b) => (a.index || 0) - (b.index || 0)).forEach(step => list.append(renderProgressStep(step)));
+        details.append(summary, list); fragment.append(details);
+      }
+      return fragment;
+    }
+    function renderProgressStep(step) {
+      const item = element('div', `progress-step ${step.status || ''}`);
+      item.append(element('span', 'progress-label', step.label || step.step || 'Working'));
+      if (step.description) item.append(element('span', 'progress-description', step.description));
+      return item;
+    }
+    function formatDuration(milliseconds) {
+      if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
+      if (milliseconds < 60000) return `${(milliseconds / 1000).toFixed(1)} s`;
+      const minutes = Math.floor(milliseconds / 60000), seconds = Math.round((milliseconds % 60000) / 1000);
+      return `${minutes} min ${seconds} s`;
+    }
+    function updateProgress(progress) {
+      if (!progress?.step) return;
+      state.progressSteps.forEach(step => { if (step.status === 'started') step.status = 'completed'; });
+      const existing = state.progressSteps.find(step => step.step === progress.step);
+      if (existing) Object.assign(existing, progress); else state.progressSteps.push({...progress});
+      const panel = $('pendingProgress'); if (!panel) return;
+      panel.hidden = false;
+      panel.replaceChildren(...state.progressSteps.sort((a, b) => (a.index || 0) - (b.index || 0)).map(renderProgressStep));
+      $('messages').scrollTop = $('messages').scrollHeight;
+    }
+    function formatValue(value) { return value === null || value === undefined ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value); }
+    function downloadCsv(block) {
+      const quote = (value) => `"${formatValue(value).replaceAll('"', '""')}"`;
+      const csv = [block.columns.map(quote).join(','), ...block.rows.map(row => block.columns.map(column => quote(row[column])).join(','))].join('\n');
+      const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'})); link.download = 'talk-to-data.csv'; link.click(); URL.revokeObjectURL(link.href);
+    }
+    function renderChart(spec) {
+      const chart = element('div', 'bars'), values = spec?.data?.values || [], x = spec?.encoding?.x?.field, y = spec?.encoding?.y?.field;
+      const max = Math.max(...values.map(item => Number(item[y]) || 0), 1);
+      values.slice(0, 20).forEach(item => { const row = element('div', 'bar-row'); row.append(element('span', '', formatValue(item[x]))); const track = element('div', 'bar-track'), fill = element('div', 'bar-fill'); fill.style.width = `${Math.max(1, ((Number(item[y]) || 0) / max) * 100)}%`; track.append(fill); row.append(track, element('strong', '', formatValue(item[y]))); chart.append(row); });
+      return chart;
+    }
+
+    async function loadSuggestions() {
+      try {
+        const data = await request('/v1/conversations/suggestions?handler=talk-to-data');
+        $('suggestions').replaceChildren(...data.suggestions.map(text => { const button = element('button', 'suggestion', text); button.onclick = () => sendMessage(text); return button; }));
+      } catch (error) { setOnline(false, 'Offline'); toast(error.message); }
+    }
+    async function loadConversations() {
+      try {
+        const conversations = await request('/v1/conversations'); $('history').replaceChildren();
+        conversations.filter(item => item.status === 'active').forEach(item => { const button = element('button', item.id === state.conversationId ? 'active' : '', item.title); button.onclick = () => openConversation(item.id); $('history').append(button); });
+        setOnline(true, 'Ready');
+      } catch (error) { setOnline(false, 'Offline'); toast(error.message); }
+    }
+    async function newConversation() {
+      state.stream?.abort(); state.conversationId = null; state.lastEventId = 0; state.progressSteps = []; localStorage.removeItem('traccia.talk-to-data.conversation');
+      $('messages').innerHTML = '<div class="welcome" id="welcome"><div class="orb">⌁</div><h2>What would you like to know?</h2><p>Ask a business question in plain language. The agents will resolve the intent, consult the documented schema, and produce safe PostgreSQL.</p><div class="suggestions" id="suggestions"></div></div>';
+      await loadSuggestions(); await loadConversations(); $('prompt').focus();
+    }
+    async function ensureConversation() {
+      if (state.conversationId) return state.conversationId;
+      const value = await request('/v1/conversations', {method: 'POST', body: JSON.stringify({agent: 'talk-to-data', handler: 'talk-to-data'})});
+      state.conversationId = value.id; localStorage.setItem('traccia.talk-to-data.conversation', value.id); await loadConversations(); return value.id;
+    }
+    async function openConversation(id) {
+      state.stream?.abort(); state.conversationId = id; state.lastEventId = 0; state.progressSteps = []; localStorage.setItem('traccia.talk-to-data.conversation', id); $('messages').replaceChildren();
+      try {
+        const messages = await request(`/v1/conversations/${id}/messages`);
+        messages.forEach(message => renderMessage(
+          message,
+          message.role === 'assistant' && ['accepted', 'streaming'].includes(message.status)
+        ));
+        await loadConversations();
+        const pending = [...messages].reverse().find(message => message.role === 'assistant' && ['accepted', 'streaming'].includes(message.status));
+        if (pending) { state.pendingAssistantId = pending.id; setBusy(true, 'Reconnecting'); connectEvents(id); }
+      } catch (error) { toast(error.message); }
+    }
+    async function sendMessage(text) {
+      text = (text ?? $('prompt').value).trim(); if (!text || state.busy) return;
+      try {
+        const id = await ensureConversation(); state.progressSteps = []; $('prompt').value = ''; resizePrompt();
+        renderMessage({role: 'user', status: 'completed', content: [{type: 'text', text}]});
+        renderMessage({role: 'assistant', status: 'streaming', content: []}, true); setBusy(true, 'Starting');
+        const accepted = await request(`/v1/conversations/${id}/messages`, {method: 'POST', body: JSON.stringify({text})});
+        state.pendingAssistantId = accepted.assistant_message_id; connectEvents(id);
+      } catch (error) { $('pendingMessage')?.remove(); setBusy(false); toast(error.message); }
+    }
+    async function connectEvents(id) {
+      state.stream?.abort(); const controller = new AbortController(); state.stream = controller;
+      try {
+        const response = await fetch(endpoint(`/v1/conversations/${id}/events`), {headers: {...headers(), 'Last-Event-ID': String(state.lastEventId)}, signal: controller.signal});
+        if (!response.ok || !response.body) throw new Error(`Event stream failed (${response.status})`);
+        const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '';
+        while (true) {
+          const {done, value} = await reader.read(); if (done) break; buffer += decoder.decode(value, {stream: true});
+          const frames = buffer.split('\n\n'); buffer = frames.pop() || '';
+          for (const frame of frames) {
+            if (!frame || frame.startsWith(':')) continue; const lines = frame.split('\n');
+            const idLine = lines.find(line => line.startsWith('id:')); if (idLine) state.lastEventId = Number(idLine.slice(3).trim());
+            const dataLine = lines.find(line => line.startsWith('data:')); if (!dataLine) continue;
+            const event = JSON.parse(dataLine.slice(5)); const terminal = await handleEvent(event);
+            if (terminal) { controller.abort(); return; }
+          }
+        }
+      } catch (error) { if (error.name !== 'AbortError') { setBusy(false); toast(error.message); } }
+    }
+    async function handleEvent(event) {
+      if (event.message_id && event.message_id !== state.pendingAssistantId) return false;
+      const labels = { 'agent.status.changed': event.data?.status?.replaceAll('_', ' '), 'clarification.required': 'Needs clarification', 'workflow.blocked': 'Unable to continue', 'query.generated': 'Validating SQL', 'query.execution.started': 'Running query', 'query.execution.completed': 'Preparing results' };
+      if (event.type === 'workflow.progress') {
+        updateProgress(event.data);
+        setBusy(true, event.data?.label || 'Working');
+      }
+      if (labels[event.type]) setBusy(true, labels[event.type]);
+      if (['assistant.message.completed', 'assistant.message.failed', 'assistant.message.cancelled'].includes(event.type)) {
+        let canonical = null;
+        try {
+          const messages = await request(`/v1/conversations/${state.conversationId}/messages`);
+          canonical = messages.find(message => message.id === event.message_id) || null;
+        } catch (_) {}
+        if (canonical && ['accepted', 'streaming'].includes(canonical.status)) return false;
+        $('pendingMessage')?.remove();
+        if (canonical) renderMessage(canonical);
+        else if (event.type === 'assistant.message.completed') renderMessage(event.data);
+        else renderMessage({role: 'assistant', status: 'failed', content: [{type: 'notice', level: 'error', text: event.type.endsWith('cancelled') ? 'Response cancelled.' : (event.data?.message || 'The request could not be completed.')}]});
+        setBusy(false); state.pendingAssistantId = null; state.progressSteps = []; await loadConversations(); $('prompt').focus();
+        return true;
+      }
+      return false;
+    }
+
+    function resizePrompt() { $('prompt').style.height = 'auto'; $('prompt').style.height = Math.min($('prompt').scrollHeight, 150) + 'px'; }
+    $('composer').onsubmit = (event) => { event.preventDefault(); sendMessage(); };
+    $('prompt').oninput = resizePrompt;
+    $('prompt').onkeydown = (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } };
+    $('newChat').onclick = $('mobileNew').onclick = newConversation;
+    $('cancel').onclick = async () => { if (!state.conversationId) return; try { await request(`/v1/conversations/${state.conversationId}/active-response`, {method: 'DELETE'}); } catch (error) { toast(error.message); } };
+    $('openSettings').onclick = () => { $('apiBase').value = state.api; $('tenantId').value = state.tenant; $('userId').value = state.user; $('settingsDialog').showModal(); };
+    $('settingsForm').addEventListener('submit', async (event) => { if (event.submitter?.value === 'cancel') return; state.api = $('apiBase').value.trim() || location.origin; state.tenant = $('tenantId').value.trim(); state.user = $('userId').value.trim(); localStorage.setItem('traccia.talk-to-data.api', state.api); localStorage.setItem('traccia.talk-to-data.tenant', state.tenant); localStorage.setItem('traccia.talk-to-data.user', state.user); await newConversation(); });
+
+    (async () => { await loadConversations(); if (state.conversationId) await openConversation(state.conversationId); else await loadSuggestions(); $('prompt').focus(); })();
+  </script>
+</body>
+</html>

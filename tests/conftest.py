@@ -4,21 +4,21 @@ from typing import Any
 
 import pytest
 
-from agent_core.approvals.service import InMemoryApprovalService
-from agent_core.config.registry import InMemoryAgentRegistry
-from agent_core.context.builder import ContextBuilderRegistry, DefaultContextBuilder
-from agent_core.events.bus import InMemoryEventBus
-from agent_core.models.base import ModelRouter
-from agent_core.models.providers.mock import MockModelProvider
-from agent_core.persistence.memory import InMemoryMemoryStore, InMemoryRunStore
-from agent_core.planning.planners import PlannerRegistry
-from agent_core.policies.engine import CompositePolicyEngine
-from agent_core.responses.composer import ResponseComposerRegistry
-from agent_core.runtime.runtime import AgentRuntime
-from agent_core.tools.executor import ToolExecutor
-from agent_core.tools.registry import ToolRegistry
-from agent_core.types.contracts import AgentDefinition, ModelProfile
-from agent_core.verification.verifiers import VerificationService
+from traccia_runtime.approvals.service import InMemoryApprovalService
+from traccia_runtime.config.registry import InMemoryAgentRegistry
+from traccia_runtime.context.builder import ContextBuilderRegistry, DefaultContextBuilder
+from traccia_runtime.events.bus import InMemoryEventBus
+from traccia_runtime.models.base import ModelRouter
+from traccia_runtime.models.providers.mock import MockModelProvider
+from traccia_runtime.persistence.memory import InMemoryMemoryStore, InMemoryRunStore
+from traccia_runtime.planning.planners import PlannerRegistry
+from traccia_runtime.policies.engine import CompositePolicyEngine
+from traccia_runtime.responses.composer import ResponseComposerRegistry
+from traccia_runtime.runtime.runtime import AgentRuntime
+from traccia_runtime.tools.executor import ToolExecutor
+from traccia_runtime.tools.registry import ToolRegistry
+from traccia_runtime.types.contracts import AgentDefinition, ModelProfile
+from traccia_runtime.verification.verifiers import VerificationService
 
 
 def make_agent(**updates: Any) -> AgentDefinition:

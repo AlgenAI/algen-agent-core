@@ -17,6 +17,7 @@ Assets include tenant data, prompts, memories, credentials, tool authority, arti
 | Malicious plugin | trusted namespace, entry-point-only discovery, API version validation, deployment signing policy |
 | Resource exhaustion | payload/result/artifact limits, semaphores, rate limits, time/token/cost/step budgets |
 | Provider compromise | isolated adapters, raw response opt-in, egress policy, fallback/circuit breaker |
+| Telemetry data exfiltration | content capture off, Traccia patching off by default, PII redaction, approved OTLP endpoints, sampling and retention policy |
 | Audit tampering | immutable audit contracts, append-only external sink, separate diagnostic logs |
 
 ## Deployment checklist
@@ -28,7 +29,7 @@ Assets include tenant data, prompts, memories, credentials, tool authority, arti
 - Require approval for write, external, and destructive tools.
 - Configure encryption at rest/in transit and tenant-aware database row security.
 - Disable raw provider metadata and content telemetry unless explicitly reviewed.
+- Treat Traccia and secondary OTLP destinations as data processors; review residency, retention, endpoint allowlists, SDK upgrades, and any automatic instrumentation before enabling them.
 - Set retention, deletion, artifact-size, request-size, and memory-size limits.
 - Run dependency, container, and plugin supply-chain scanning.
 - Test cancellation, restore, approval expiry, incident redaction, and audit delivery.
-

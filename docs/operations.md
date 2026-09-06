@@ -1,12 +1,195 @@
 # Operations guide
 
-Run `agent-core` with `AGENT_CORE_CONFIG` set to one or more OS-path-separated YAML files. Put secrets in the referenced environment variables. Use PostgreSQL for durable checkpoints and immutable events, Redis for expiring memory/rate coordination, and object storage behind `ArtifactStore` for large artifacts.
+Run `traccia-runtime` with `TRACCIA_RUNTIME_CONFIG` set to one or more OS-path-separated YAML files. Put secrets in referenced environment variables. PostgreSQL can persist run checkpoints, conversation memory, events, audits, approvals, artifacts, analytical graphs, worker leases, and the tool-execution ledger. Redis can alternatively store run checkpoints, expiring conversation memory, and scoped cache entries. See the [production-readiness roadmap](production-readiness.md) for the remaining limits and [Analytical Runtime](analytical-runtime.md) for the graph, method, model-service, governance, evaluation, and worker contracts.
+
+## Durable single-node configuration
+
+Install `traccia-runtime[postgres,auth]`, set the referenced secrets, and configure all execution
+records on the same PostgreSQL database:
+
+```yaml
+storage:
+  run_store: postgres
+  memory_store: postgres
+  event_store: postgres
+  audit_store: postgres
+  approval_store: postgres
+  artifact_store: postgres
+  tool_execution_store: postgres
+  conversation_store: postgres
+  postgres_dsn: env://TRACCIA_RUNTIME_POSTGRES_DSN
+  initialize_schema: true
+  postgres_min_pool_size: 1
+  postgres_max_pool_size: 10
+  memory_retention_seconds: 86400
+runtime:
+  recover_incomplete_runs: true
+  recovery_limit: 1000
+  shutdown_grace_seconds: 10
+analytical_execution:
+  graph_store: postgres
+query_governance:
+  allowed_purposes: [executive_analytics]
+  require_certified_sources: true
+  maximum_rows: 10000
+  maximum_bytes_scanned: 1000000000
+  maximum_compute_seconds: 30
+distributed_execution:
+  enabled: true
+  queue_backend: postgres
+  lease_seconds: 30
+  worker_concurrency: 4
+api:
+  auth_mode: jwt
+  jwt_key: env://TRACCIA_RUNTIME_JWT_PUBLIC_KEY
+  jwt_algorithms: [RS256]
+  jwt_issuer: https://identity.example.com/
+  jwt_audience: traccia-runtime
+  tenant_claim: tenant_id
+  scopes_claim: scope
+  cors_allowed_origins: [https://dashboard.example.com]
+  cors_allow_credentials: true
+  # Defaults also allow Authorization, Content-Type, Last-Event-ID,
+  # X-Tenant-ID, X-User-ID, and X-Scopes.
+```
+
+The schema runner records applied files transactionally. FastAPI startup initializes storage and
+recovers non-paused incomplete runs. Completed tool calls return their persisted result; an
+interrupted side-effecting call becomes `indeterminate` and requires reconciliation rather than
+automatic replay. Approval and clarification waits remain paused across restarts.
+
+## Scoped caching
+
+Caching defaults off. Use the in-memory backend for development and Redis for multiple processes or
+replicas. Each integration point has an explicit policy and isolation scope:
+
+```yaml
+cache:
+  backend: redis
+  redis_url: env://TRACCIA_RUNTIME_REDIS_URL
+  key_secret: env://TRACCIA_RUNTIME_CACHE_KEY_SECRET
+  key_prefix: traccia-runtime:cache
+  policies:
+    model_capabilities: {enabled: true, scope: global, ttl_seconds: 86400}
+    retrieval: {enabled: true, scope: tenant, ttl_seconds: 300, maximum_value_bytes: 2000000}
+    query_results: {enabled: true, scope: user, ttl_seconds: 60, maximum_value_bytes: 2000000}
+    model_responses: {enabled: false, scope: user, ttl_seconds: 120}
+    tool_results: {enabled: true, scope: user, ttl_seconds: 120}
+```
+
+Set both referenced values through a secret manager. `key_secret` is optional but recommended; it
+HMACs already opaque key material. Tenant, user, session, request content, prompts, SQL, and arguments
+never appear in Redis keys or telemetry.
+
+Use tenant scope only when authorization and results are identical for every user in that tenant.
+Use user scope for RLS- or role-dependent data, session scope for conversation-dependent outputs, run
+scope for repeated work inside one execution, and global scope only for public technical metadata such
+as provider capabilities. The authorization fingerprint is included when callers supply one.
+
+Exact model-response caching is intentionally disabled by default because it changes freshness and
+sampling behavior. Enable it only for evaluated workloads; streaming and raw-provider responses bypass
+it. Tool caching is restricted to idempotent tools classified `none` or `read`. Destructive, write, and
+externally visible tools always execute normally. Cached provider usage is reported as cached tokens
+with zero incremental configured-provider cost.
+
+Invalidate related entries with `await container.cache.invalidate_tags("dataset:v2")` after a governed
+data or configuration release. Prefer a version token in cache material when a deterministic dataset
+version is available. Cache errors do not fail agent runs. Alert on cache error rate, hit rate by policy,
+oversize rejections, and Redis latency.
+
+Every cache get, set, and invalidation creates OpenTelemetry spans and metrics with backend, policy,
+namespace, scope, outcome, duration, and value size only. When Traccia is enabled these signals follow
+the same provider/export path as agent and conversation traces; cache content and keys are never sent.
+
+Conversation responses that were in progress during a process restart are marked failed and
+retryable; Traccia Runtime does not blindly replay a generic conversation handler because the
+handler may own non-idempotent external effects. Dashboard clients reload persisted messages and
+reconnect to SSE with `Last-Event-ID`. Use fetch-based SSE when bearer authentication is enabled.
 
 Health endpoints are `/health/live` and `/health/ready`. Export OpenTelemetry through a deployment-specific SDK exporter; content capture defaults off. Logs are JSON and redacted. Alert on run failure ratio, provider circuit openings, approval age, p95 model/tool latency, budget exhaustion, and event-store lag.
 
-Use at least two workers behind a durable queue in production. A worker must claim one checkpoint version, heartbeat long calls, and rely on tool idempotency keys. Run database migration `src/agent_core/persistence/migrations/001_initial.sql` before switching to PostgreSQL.
+## Traccia
+
+Traccia is an optional OpenTelemetry-native observability backend. Install it separately so standard OTLP deployments do not carry the dependency:
+
+```bash
+pip install -e '.[traccia]'
+```
+
+Enable it in YAML:
+
+```yaml
+telemetry:
+  enabled: true
+  service_name: traccia-runtime
+  include_content: false
+  include_conversation_content: false
+  max_content_chars: 16384
+  # Optional second exporter for dual delivery to another OTLP backend:
+  # otlp_endpoint: https://otel-collector.example.com/v1/traces
+  traccia:
+    enabled: true
+    api_key: env://TRACCIA_API_KEY
+    endpoint: https://api.traccia.ai/v2/traces
+    metrics_endpoint: https://api.traccia.ai/v2/metrics
+    environment: production
+    project_id: customer-assistant
+    sample_rate: 1.0
+    enable_patching: false
+    enable_token_counting: true
+    enable_costs: true
+    enable_metrics: true
+    redact_pii: true
+    max_spans_per_second: 100
+    flush_timeout_seconds: 5
+```
+
+Set `TRACCIA_API_KEY` through the deployment secret manager. Alternatively, omit `api_key` here and let the Traccia SDK load `TRACCIA_API_KEY` or `traccia.toml`. Never put a literal key in YAML.
+
+Traccia Runtime initializes Traccia once with `service_role: orchestrator` and `auto_start_trace: false`, scopes each run with its versioned agent identity, and stops and flushes the SDK during FastAPI shutdown. One `agent.run` root span groups the context, model, tool, verification, and memory spans for an execution. Traccia Runtime stamps Traccia-compatible `agent.id`, `agent.name`, `session.id`, tenant, environment, and `llm.usage.*` attributes directly, so identity and provider-reported token usage do not depend on provider SDK auto-instrumentation. Existing spans continue to use the OpenTelemetry API; enabling Traccia changes their provider/export pipeline without coupling orchestration to Traccia SDK types.
+
+Conversation handlers follow Traccia's session model: one user message creates one
+`conversation.turn` trace, while every turn in that conversation shares the stable conversation ID as
+`session.id`. Agent runs started by the handler are child spans in that interaction trace, including
+parallel agents, while their own `agent.id` attributes preserve specialist attribution. The turn root
+also records `interaction.id`, user/tenant IDs, outcome, child-run count, and content-block count.
+This gives the platform both per-turn timelines and session-level duration/token/cost rollups.
+
+`include_conversation_content` controls only the redacted user message and narrative assistant text on
+the turn span. It is separate from `include_content`, which controls substantially more sensitive LLM
+messages, retrieved context, and tool inputs/outputs. Keep both disabled unless the tenant's data policy
+explicitly permits export.
+
+The Traccia adapter registers the SDK's underlying OpenTelemetry provider as the process-global provider before execution. Initialize Traccia before any other component installs a global OTEL provider; conflicting providers are rejected with an actionable configuration error rather than silently dropping spans.
+
+To export the same spans to Traccia and another OTLP backend, also set `telemetry.otlp_endpoint`. Traccia Runtime attaches the standard OTLP processor to Traccia's OpenTelemetry provider. Leave it unset when Traccia is the only destination to prevent duplicate delivery.
+
+Automatic library patching defaults off because Traccia Runtime already traces normalized model and tool boundaries. Enable it only when deployment plugins make otherwise invisible SDK calls, and review content capture first. `telemetry.include_content` remains false by default. When explicitly enabled, Traccia Runtime emits redacted `llm.prompt`, `llm.completion`, normalized model messages, and tool input/output attributes, each bounded by `telemetry.max_content_chars`. `redact_pii` enables Traccia's additional best-effort processor; neither mechanism replaces upstream data-minimization policy.
+
+Agent, planning, step, context, policy, model, tool, verification, and memory spans carry provider-neutral operational metadata. LLM spans include latency, finish reason, response ID, token-source fields, and configured-rate cost estimates. Pricing and billing fields owned by the Traccia ingestion service are not forged by Traccia Runtime.
+
+Environment-only activation is also supported:
+
+```bash
+export TRACCIA_RUNTIME__TELEMETRY__TRACCIA__ENABLED=true
+export TRACCIA_RUNTIME__TELEMETRY__TRACCIA__ENVIRONMENT=production
+export TRACCIA_API_KEY='resolved-by-your-secret-manager'
+```
+
+Library users should call `await container.astart()` before accepting traffic and
+`await container.aclose()` during shutdown. These initialize durable stores, recover runs, drain
+active work, close database clients, and flush pending telemetry.
+
+If runs succeed but do not appear at the ingestion endpoint, first confirm the process executes `container.close()` or FastAPI lifespan shutdown. Set `TRACCIA_DEBUG=true` temporarily to surface exporter diagnostics, verify that the workspace key matches the configured endpoint, and check outbound access to the endpoint. Keep the flush timeout above the deployment's expected exporter latency.
+
+The ordinary agent/conversation background scheduler remains process-local. For analytical graphs,
+enqueue a stable deduplication key in `container.work_queue` and run `DistributedWorker` processes
+with a registered graph handler. PostgreSQL claims use leases and `SKIP LOCKED`; renew leases for work
+that may exceed the configured interval. Graph nodes checkpoint independently, so retry handlers must
+resume the graph rather than replay completed side effects. PostgreSQL-backed SSE subscriptions poll
+durable history to receive cross-process events. Schema initialization is automatic by default and
+can be disabled when an external schema-management process owns it.
 
 Cancellation is cooperative for provider/tool adapters. Keep adapter timeouts lower than run deadlines. Graceful shutdown should stop accepting runs, cancel active tasks, flush telemetry, and leave resumable checkpoints.
 
-Back up run, event, audit, approval, and artifact metadata according to retention policy. User deletion must remove tenant/session memory and authorized artifacts while preserving legally required, redacted audit records.
-
+Back up each durable store enabled by the application according to its retention policy. User deletion must remove tenant/session memory and authorized artifacts while preserving legally required, redacted audit records.

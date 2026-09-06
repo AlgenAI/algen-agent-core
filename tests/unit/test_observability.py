@@ -1,0 +1,353 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from conftest import make_runtime  # type: ignore[import-not-found]
+
+from traccia_runtime.config.settings import AppSettings, TracciaSettings
+from traccia_runtime.conversations.service import (
+    ConversationHandlerRegistry,
+    ConversationService,
+    RuntimeConversationHandler,
+)
+from traccia_runtime.conversations.stores import (
+    InMemoryConversationEventBus,
+    InMemoryConversationStore,
+)
+from traccia_runtime.exceptions.errors import ConfigurationError
+from traccia_runtime.observability.traccia_adapter import (
+    NoopObservabilityAdapter,
+    TracciaObservabilityAdapter,
+    observability_adapter,
+)
+from traccia_runtime.types.contracts import RunRequest
+
+
+class FakeRuntimeConfig:
+    def __init__(self, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self._calls = calls
+
+    @contextmanager
+    def run_identity(self, **values: Any) -> Iterator[None]:
+        self._calls.append(("run_identity", values))
+        yield
+
+
+def test_traccia_configuration_is_strict_and_disabled_by_default() -> None:
+    settings = AppSettings()
+    assert settings.telemetry.traccia.enabled is False
+    assert isinstance(observability_adapter(settings.telemetry), NoopObservabilityAdapter)
+    with pytest.raises(ValueError, match="env://"):
+        TracciaSettings(enabled=True, api_key="literal-secret")
+
+
+def test_traccia_adapter_lifecycle_and_run_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Any]] = []
+    fake = SimpleNamespace(
+        init=lambda **options: calls.append(("init", options)),
+        runtime_config=FakeRuntimeConfig(calls),
+        stop_tracing=lambda timeout: calls.append(("stop", timeout)),
+    )
+    monkeypatch.setenv("TRACCIA_TEST_KEY", "secret-value")
+    monkeypatch.setattr(
+        "traccia_runtime.observability.traccia_adapter.importlib.import_module",
+        lambda name: fake,
+    )
+    adapter = TracciaObservabilityAdapter(
+        TracciaSettings(
+            enabled=True,
+            api_key="env://TRACCIA_TEST_KEY",
+            endpoint="https://api.traccia.ai/v2/traces",
+            metrics_endpoint="https://api.traccia.ai/v2/metrics",
+            environment="test",
+            project_id="talk-to-data",
+            sample_rate=0.5,
+        ),
+        "traccia-runtime-test",
+    )
+    registered: list[Any] = []
+    monkeypatch.setattr(adapter, "_register_otel_provider", registered.append)
+
+    adapter.start()
+    adapter.start()
+    with adapter.run_scope(
+        agent_id="agent@1.0.0", agent_name="agent", tenant_id="tenant"
+    ):
+        pass
+    adapter.stop()
+
+    init_calls = [value for name, value in calls if name == "init"]
+    assert len(init_calls) == 1
+    assert registered == [None]
+    assert init_calls[0]["api_key"] == "secret-value"
+    assert init_calls[0]["service_role"] == "orchestrator"
+    assert init_calls[0]["env"] == "test"
+    assert init_calls[0]["metrics_endpoint"] == "https://api.traccia.ai/v2/metrics"
+    assert init_calls[0]["auto_start_trace"] is False
+    assert init_calls[0]["enable_patching"] is False
+    assert (
+        "run_identity",
+        {
+            "agent_id": "agent@1.0.0",
+            "agent_name": "agent",
+            "env": "test",
+            "tenant_id": "tenant",
+            "project_id": "talk-to-data",
+        },
+    ) in calls
+    assert ("stop", 5.0) in calls
+    assert adapter.span_attributes() == {
+        "env": "test",
+        "environment": "test",
+    }
+
+
+def test_traccia_adapter_reports_missing_optional_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(name: str) -> None:
+        raise ModuleNotFoundError(name)
+
+    monkeypatch.setattr(
+        "traccia_runtime.observability.traccia_adapter.importlib.import_module", missing
+    )
+    adapter = TracciaObservabilityAdapter(
+        TracciaSettings(enabled=True), "traccia-runtime-test"
+    )
+    with pytest.raises(ConfigurationError, match=r"\[traccia\]"):
+        adapter.start()
+
+
+def test_traccia_adapter_requires_referenced_environment_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = SimpleNamespace(init=lambda **options: None)
+    monkeypatch.delenv("MISSING_TRACCIA_KEY", raising=False)
+    monkeypatch.setattr(
+        "traccia_runtime.observability.traccia_adapter.importlib.import_module",
+        lambda name: fake,
+    )
+    adapter = TracciaObservabilityAdapter(
+        TracciaSettings(enabled=True, api_key="env://MISSING_TRACCIA_KEY"),
+        "traccia-runtime-test",
+    )
+    with pytest.raises(ConfigurationError, match="MISSING_TRACCIA_KEY"):
+        adapter.start()
+
+
+async def test_runtime_scopes_run_with_agent_identity() -> None:
+    calls: list[tuple[str, Any]] = []
+
+    class RecordingObservability(NoopObservabilityAdapter):
+        @contextmanager
+        def run_scope(
+            self, *, agent_id: str, agent_name: str, tenant_id: str
+        ) -> Iterator[None]:
+            calls.append(
+                (
+                    "enter",
+                    {
+                        "agent_id": agent_id,
+                        "agent_name": agent_name,
+                        "tenant_id": tenant_id,
+                    },
+                )
+            )
+            yield
+            calls.append(("exit", {}))
+
+    runtime = make_runtime()
+    runtime.observability = RecordingObservability()
+    result = await runtime.run(
+        RunRequest(
+            agent="test-agent",
+            input="hello",
+            tenant_id="tenant",
+            user_id="user",
+        )
+    )
+
+    assert result.output == "answer"
+    assert calls == [
+        (
+            "enter",
+            {
+                "agent_id": "test-agent@1.0.0",
+                "agent_name": "test-agent",
+                "tenant_id": "tenant",
+            },
+        ),
+        ("exit", {}),
+    ]
+
+
+@dataclass
+class RecordedSpan:
+    name: str
+    parent: str | None
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+    def set_attribute(self, name: str, value: Any) -> None:
+        self.attributes[name] = value
+
+
+class RecordingTracer:
+    def __init__(self) -> None:
+        self.spans: list[RecordedSpan] = []
+        self._current: list[RecordedSpan] = []
+
+    @contextmanager
+    def start_as_current_span(
+        self,
+        name: str,
+        attributes: dict[str, Any] | None = None,
+        context: Any | None = None,
+    ) -> Iterator[RecordedSpan]:
+        span = RecordedSpan(
+            name=name,
+            parent=(
+                None
+                if context is not None
+                else self._current[-1].name if self._current else None
+            ),
+            attributes=dict(attributes or {}),
+        )
+        self.spans.append(span)
+        self._current.append(span)
+        try:
+            yield span
+        finally:
+            self._current.pop()
+
+
+async def test_runtime_emits_one_root_trace_with_traccia_semantics() -> None:
+    class EnvironmentObservability(NoopObservabilityAdapter):
+        def span_attributes(self) -> dict[str, str]:
+            return {"env": "production", "environment": "production"}
+
+    runtime = make_runtime()
+    runtime.observability = EnvironmentObservability()
+    tracer = RecordingTracer()
+    runtime._tracer = tracer
+
+    result = await runtime.run(
+        RunRequest(
+            agent="test-agent",
+            input="hello",
+            tenant_id="tenant",
+            user_id="user",
+        )
+    )
+
+    assert result.output == "answer"
+    roots = [span for span in tracer.spans if span.parent is None]
+    assert [span.name for span in roots] == ["agent.run"]
+    assert all(span.name == "agent.run" or span.parent is not None for span in tracer.spans)
+
+    root = roots[0]
+    assert root.attributes["agent.id"] == "test-agent@1.0.0"
+    assert root.attributes["agent.name"] == "test-agent"
+    assert root.attributes["agent.version"] == "1.0.0"
+    assert root.attributes["agent.description"] == "deterministic test agent"
+    assert root.attributes["session.id"]
+    assert root.attributes["environment"] == "production"
+    assert root.attributes["agent.run.status"] == "completed"
+    assert root.attributes["agent.run.model_calls"] == 1
+
+    planning_span = next(span for span in tracer.spans if span.name == "agent.planning")
+    assert planning_span.attributes["agent.planner.name"] == "react"
+    step_span = next(span for span in tracer.spans if span.name == "agent.step")
+    assert step_span.attributes["agent.step.type"] == "model"
+    model_span_parent = next(
+        span.parent for span in tracer.spans if span.name == "agent.model.call"
+    )
+    assert model_span_parent == "agent.step"
+
+    policy_span = next(
+        span for span in tracer.spans if span.name == "agent.policy.evaluate"
+    )
+    assert policy_span.attributes["guardrail.source_sdk"] == "traccia_runtime"
+    assert policy_span.attributes["policy.action"] == "allow"
+
+    model_span = next(span for span in tracer.spans if span.name == "agent.model.call")
+    assert model_span.attributes["span.type"] == "LLM"
+    assert model_span.attributes["llm.vendor"] == "mock"
+    assert model_span.attributes["llm.usage.prompt_tokens"] == 10
+    assert model_span.attributes["llm.usage.total_tokens"] == 11
+    assert model_span.attributes["llm.finish_reason"] == "stop"
+    assert model_span.attributes["llm.cost.source"] == "configured_provider_rates"
+    assert "llm.prompt" not in model_span.attributes
+
+
+async def test_runtime_content_telemetry_is_opt_in_redacted_and_bounded() -> None:
+    runtime = make_runtime()
+    runtime.telemetry_include_content = True
+    runtime.telemetry_max_content_chars = 32
+    tracer = RecordingTracer()
+    runtime._tracer = tracer
+
+    await runtime.run(
+        RunRequest(
+            agent="test-agent",
+            input="Bearer highly-sensitive-token-value that must not be exported",
+            tenant_id="tenant",
+            user_id="user",
+        )
+    )
+
+    model_span = next(span for span in tracer.spans if span.name == "agent.model.call")
+    prompt = model_span.attributes["llm.prompt"]
+    assert "highly-sensitive-token-value" not in prompt
+    assert prompt.endswith("...[TRUNCATED]")
+    assert "llm.completion" in model_span.attributes
+
+
+async def test_conversation_turn_is_one_trace_with_agent_runs_as_children() -> None:
+    runtime = make_runtime()
+    tracer = RecordingTracer()
+    runtime._tracer = tracer
+    handlers = ConversationHandlerRegistry()
+    handlers.register(RuntimeConversationHandler(runtime))
+    conversations = ConversationService(
+        InMemoryConversationStore(),
+        InMemoryConversationEventBus(),
+        handlers,
+        telemetry_include_content=True,
+    )
+    conversations._tracer = tracer
+    conversation = await conversations.create(
+        tenant_id="tenant-a",
+        user_id="user-a",
+        agent="test-agent",
+    )
+    user_message, _ = await conversations.submit(
+        conversation.id,
+        "tenant-a",
+        "user-a",
+        "Show route performance",
+    )
+    for _ in range(100):
+        messages = await conversations.messages(conversation.id, "tenant-a")
+        if messages[-1].status.value == "completed":
+            break
+        await asyncio.sleep(0.001)
+
+    turn = next(span for span in tracer.spans if span.name == "conversation.turn")
+    agent_run = next(span for span in tracer.spans if span.name == "agent.run")
+    assert turn.parent is None
+    assert agent_run.parent == "conversation.turn"
+    assert turn.attributes["session.id"] == conversation.id
+    assert turn.attributes["gen_ai.conversation.id"] == conversation.id
+    assert turn.attributes["interaction.id"] == user_message.id
+    assert turn.attributes["conversation.input"] == "Show route performance"
+    assert turn.attributes["conversation.output"] == "answer"
+    assert turn.attributes["conversation.turn.status"] == "completed"
+    assert turn.attributes["conversation.agent_run_count"] == 1

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Talk to Data - High-level architecture</title>
+  <style>
+    :root { --ink:#172126; --muted:#627077; --paper:#f4f1e8; --card:#fffdf7; --line:#b9c3bd; --teal:#0a756d; --blue:#2968a3; --amber:#b76716; --violet:#7255a3; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:var(--paper); font:15px/1.45 Inter,ui-sans-serif,system-ui,sans-serif; }
+    main { width:min(1240px,calc(100% - 32px)); margin:32px auto 56px; }
+    header { display:flex; justify-content:space-between; align-items:end; gap:24px; margin-bottom:28px; }
+    h1 { margin:0; font:700 clamp(28px,4vw,52px)/1.05 Georgia,serif; letter-spacing:-.03em; }
+    .kicker { color:var(--teal); font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
+    .subtitle { max-width:560px; color:var(--muted); }
+    .flow { display:grid; grid-template-columns:1fr 46px 1.25fr 46px 1.25fr 46px 1.1fr; align-items:stretch; }
+    .arrow { display:grid; place-items:center; color:var(--muted); font-size:28px; }
+    .stage { min-height:188px; padding:20px; background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 8px 28px #17212610; }
+    .stage h2 { margin:4px 0 10px; font-size:19px; }
+    .stage p { color:var(--muted); margin:0; }
+    .number { display:grid; place-items:center; width:30px; height:30px; border-radius:50%; color:white; background:var(--teal); font-weight:800; }
+    .agents { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-top:14px; }
+    .agent { padding:9px 11px; border-radius:9px; color:white; background:var(--blue); font-size:13px; font-weight:700; }
+    .agent:nth-child(2),.agent:nth-child(5) { background:var(--violet); }
+    .agent:nth-child(4) { background:var(--amber); }
+    .rails { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:20px; }
+    .rail { padding:17px 18px; border-radius:14px; color:white; }
+    .rail strong { display:block; margin-bottom:4px; }
+    .rail span { opacity:.82; font-size:13px; }
+    .semantic { background:var(--teal); } .runtime { background:#26383e; } .control { background:var(--violet); }
+    .legend { margin-top:22px; padding:18px 20px; border-left:4px solid var(--amber); background:#fff8e9; }
+    @media (max-width:900px) { header{display:block}.flow{grid-template-columns:1fr}.arrow{height:42px;transform:rotate(90deg)}.rails{grid-template-columns:1fr}.subtitle{margin-top:12px} }
+    @media print { body{background:white} main{width:100%;margin:0}.stage{box-shadow:none} }
+  </style>
+</head>
+<body><main>
+  <header>
+    <div><div class="kicker">Traccia Runtime reference flow</div><h1>Talk to Data<br>multi-agent system</h1></div>
+    <div class="subtitle">A conversational analytics application where governed definitions and deterministic tools constrain what language models may plan, query, and claim.</div>
+  </header>
+  <section class="flow" aria-label="High-level execution flow">
+    <article class="stage"><span class="number">1</span><h2>Executive conversation</h2><p>Free-form questions, essential clarifications, streamed status, tables, charts, SQL, assumptions, and follow-ups.</p></article>
+    <div class="arrow" aria-hidden="true">&#8594;</div>
+    <article class="stage"><span class="number">2</span><h2>Bounded agent team</h2><p>Specialists exchange validated structured contracts; they do not share private reasoning.</p><div class="agents"><span class="agent">Router</span><span class="agent">Planner</span><span class="agent">SQL</span><span class="agent">Insight</span><span class="agent">Verifier</span></div></article>
+    <div class="arrow" aria-hidden="true">&#8594;</div>
+    <article class="stage"><span class="number">3</span><h2>Governed analysis</h2><p>Read-only PostgreSQL plus explicit tools for summaries, anomaly screens, baseline forecasts, sensitivities, diagnostics, and model-required gates.</p></article>
+    <div class="arrow" aria-hidden="true">&#8594;</div>
+    <article class="stage"><span class="number">4</span><h2>Evidence-led response</h2><p>Every answer carries query evidence, method, confidence, limitations, source identifiers, and a verification result.</p></article>
+  </section>
+  <section class="rails" aria-label="Cross-cutting architecture">
+    <div class="rail semantic"><strong>Semantic metrics layer</strong><span>Versioned metrics, dimensions, grains, joins, synonyms, ownership, and certification in YAML.</span></div>
+    <div class="rail runtime"><strong>Traccia Runtime</strong><span>Conversation durability, state, budgets, policies, provider routing, retries, audit, telemetry, and streaming.</span></div>
+    <div class="rail control"><strong>Traccia control plane</strong><span>Prompt versions, evaluations, observability, governance, audit review, and deployment metadata.</span></div>
+  </section>
+  <aside class="legend"><strong>Safety boundary:</strong> the LLM interprets and plans. PostgreSQL permissions, SQL validation, semantic definitions, deterministic analytics, and independent verification decide what can run and what may be claimed.</aside>
+</main></body>
+</html>

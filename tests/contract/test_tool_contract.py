@@ -1,11 +1,11 @@
 import pytest
 
-from agent_core.exceptions.errors import ToolExecutionError
-from agent_core.policies.engine import CompositePolicyEngine
-from agent_core.tools.contracts import Tool, ToolContext, ToolDefinition
-from agent_core.tools.executor import ToolExecutor
-from agent_core.tools.registry import ToolRegistry
-from agent_core.types.contracts import RetryPolicy
+from traccia_runtime.exceptions.errors import ToolExecutionError
+from traccia_runtime.policies.engine import CompositePolicyEngine
+from traccia_runtime.tools.contracts import Tool, ToolContext, ToolDefinition
+from traccia_runtime.tools.executor import ToolExecutor
+from traccia_runtime.tools.registry import ToolRegistry
+from traccia_runtime.types.contracts import RetryPolicy
 
 
 def context() -> ToolContext:

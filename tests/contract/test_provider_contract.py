@@ -1,8 +1,8 @@
 import httpx
 
-from agent_core.models.providers.adapters import AnthropicProvider
-from agent_core.models.providers.openai_compatible import OpenAICompatibleProvider
-from agent_core.types.contracts import Message, ModelCapabilities, ModelRequest, Role
+from traccia_runtime.models.providers.adapters import AnthropicProvider, OpenAIProvider
+from traccia_runtime.models.providers.openai_compatible import OpenAICompatibleProvider
+from traccia_runtime.types.contracts import Message, ModelCapabilities, ModelRequest, Role
 
 
 async def test_openai_compatible_normalizes_wire_response() -> None:
@@ -22,6 +22,64 @@ async def test_openai_compatible_normalizes_wire_response() -> None:
     assert response.provider == "custom"
     assert response.message.text_content == "ok"
     assert response.usage.total_tokens == 4
+
+
+async def test_openai_uses_modern_completion_token_parameter() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        assert body["max_completion_tokens"] == 256
+        assert "max_tokens" not in body
+        return httpx.Response(
+            200,
+            json={
+                "id": "response-1",
+                "model": "gpt-5",
+                "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+            },
+        )
+
+    provider = OpenAIProvider(
+        "env://OPENAI_API_KEY",
+        "gpt-5",
+        secret_provider=StaticSecrets(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    response = await provider.generate(
+        ModelRequest(
+            messages=(Message.text(Role.USER, "hi"),),
+            max_output_tokens=256,
+        )
+    )
+    assert response.message.text_content == "ok"
+
+
+async def test_openai_preserves_legacy_token_parameter_for_older_models() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        assert body["max_tokens"] == 128
+        assert "max_completion_tokens" not in body
+        return httpx.Response(
+            200,
+            json={
+                "id": "response-legacy",
+                "model": "gpt-4o",
+                "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}],
+            },
+        )
+
+    provider = OpenAIProvider(
+        "env://OPENAI_API_KEY",
+        "gpt-4o",
+        secret_provider=StaticSecrets(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    await provider.generate(
+        ModelRequest(
+            messages=(Message.text(Role.USER, "hi"),),
+            max_output_tokens=128,
+        )
+    )
 
 
 class StaticSecrets:

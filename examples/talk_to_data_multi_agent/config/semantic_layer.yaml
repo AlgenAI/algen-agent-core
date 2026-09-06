@@ -1,0 +1,832 @@
+name: airline_revenue_management
+version: 1.2.0
+description: Verified and explicitly bounded business metrics available to the talk-to-data example.
+timezone: Asia/Kolkata
+currency: INR
+metadata:
+  owner: Revenue Management
+  review_status: example-only
+  source_context: data/schema/database_context.md
+  source_context_inspected_at: "2026-09-05"
+  timezone_status: deployment-assumption-pending-owner-confirmation
+  currency_status: deployment-assumption-pending-owner-confirmation
+  minimum_query_certification: verified
+  maximum_query_sensitivity: confidential
+  unsupported_domains: [series, external_market_share, campaign_outcomes, causal_uplift, trained_forecast, optimization]
+
+models:
+  - name: ticket_sales
+    description: Current PNR-flight segments and canonical displayed booked sales metrics; not a flown or recognized revenue ledger.
+    table: public.pnr_flight
+    primary_key: [pnr, flight_date, flight_number, sector]
+    default_time_dimension: flight_date
+    certification: verified
+    sensitivity: confidential
+    metadata:
+      snapshot_behavior: current_upsert
+      date_lenses: [departure, booking]
+      currency_assumption: INR_pending_owner_confirmation
+    dimensions:
+      - name: route
+        label: Route
+        description: Origin-destination sector operated by the flight.
+        expression: sector
+        type: string
+        synonyms: [sector, market]
+      - name: flight
+        label: Flight number
+        description: Operating flight number.
+        expression: flight_number
+        type: string
+        synonyms: [flight number]
+      - name: flight_date
+        label: Flight date
+        description: Scheduled flight date; the raw source currently stores this as VARCHAR.
+        expression: flight_date
+        type: string
+        synonyms: [departure date]
+        is_time: true
+      - name: booked_date
+        label: Booking date
+        description: Date booked; the raw source currently stores this as VARCHAR.
+        expression: booked_date
+        type: string
+        synonyms: [sale date]
+        is_time: true
+      - name: booking_window_days
+        label: Days before departure
+        description: Number of days between booking and departure.
+        expression: booked_to_flight_gap_day
+        type: number
+        synonyms: [booking window, days to departure]
+      - name: booked_fare_class
+        label: Fare class
+        description: Fare class booked for the passenger segment.
+        expression: fare_class
+        type: string
+        synonyms: [rbd]
+    metrics:
+      - name: bookings
+        label: Booked passengers
+        description: Sum of passenger seats represented by PNR segments.
+        expression: seat_count
+        aggregation: sum
+        format: integer
+        synonyms: [passengers, seats booked]
+        allowed_dimensions: [route, flight, flight_date, booked_date, booking_window_days, booked_fare_class]
+        certification: verified
+        owner: Revenue Management
+      - name: ticket_revenue
+        label: Ticket revenue
+        description: Sum of total_amount from passenger itinerary segments.
+        expression: total_amount
+        aggregation: sum
+        format: currency
+        synonyms: [revenue, sales]
+        allowed_dimensions: [route, flight, flight_date, booked_date, booking_window_days, booked_fare_class]
+        certification: verified
+        owner: Finance
+      - name: average_fare
+        label: Displayed average yield
+        description: Canonical displayed booked revenue divided by booked passengers; not a flown yield or demand-response estimate.
+        expression: SUM(total_amount) / NULLIF(SUM(seat_count), 0)
+        aggregation: expression
+        format: currency
+        synonyms: [average ticket price, average fare, booked yield]
+        allowed_dimensions: [route, flight, flight_date, booked_date, booking_window_days, booked_fare_class]
+        additive: false
+        certification: verified
+        owner: Revenue Management
+
+  - name: flown_rbd_performance
+    description: Legacy fare-class departure outcomes; revenue is separate from canonical PNR booked revenue.
+    table: public.rbd_daily
+    primary_key: [flight_date, flight_number, sector, fare_class]
+    default_time_dimension: performance_date
+    certification: verified
+    sensitivity: confidential
+    metadata:
+      snapshot_behavior: current_upsert
+      reconciliation_status: not_governed_against_pnr
+    dimensions:
+      - name: performance_route
+        label: Performance route
+        description: Route/sector for the flown RBD observation.
+        expression: sector
+        type: string
+        synonyms: [flown route]
+      - name: performance_flight
+        label: Performance flight
+        description: Flight number for the flown observation.
+        expression: flight_number
+        type: string
+      - name: performance_date
+        label: Performance date
+        description: Flight date; currently represented as VARCHAR in the source.
+        expression: flight_date
+        type: string
+        is_time: true
+      - name: performance_fare_class
+        label: Performance fare class
+        description: Reservation booking designator.
+        expression: fare_class
+        type: string
+      - name: performance_weekday
+        label: Day of week
+        description: Day-of-week label derived after safely parsing flight_date.
+        expression: day
+        type: string
+        synonyms: [weekday]
+    metrics:
+      - name: rbd_booked
+        label: RBD booked seats
+        description: Sum of the legacy RBD booked field; not the canonical displayed ticket KPI.
+        expression: booked
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [performance_route, performance_flight, performance_date, performance_fare_class, performance_weekday]
+        certification: verified
+        owner: Revenue Management
+      - name: rbd_cancellations
+        label: RBD cancellations
+        description: Sum of cancellation counts in RBD departure observations.
+        expression: cancellation
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [performance_route, performance_flight, performance_date, performance_fare_class, performance_weekday]
+        certification: verified
+        owner: Revenue Management
+      - name: rbd_net_departed
+        label: RBD net/departed seats
+        description: Sum of the legacy RBD net field; business naming remains subject to owner confirmation.
+        expression: net
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [performance_route, performance_flight, performance_date, performance_fare_class, performance_weekday]
+        certification: draft
+        owner: Revenue Management
+      - name: rbd_no_shows
+        label: RBD no-shows
+        description: Sum of recorded no-show counts.
+        expression: no_show_count
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [performance_route, performance_flight, performance_date, performance_fare_class, performance_weekday]
+        certification: verified
+        owner: Revenue Management
+      - name: rbd_revenue
+        label: RBD-derived revenue
+        description: Sum of recorded RBD revenue; it must not be described as realized or substituted for canonical PNR booked revenue until certified.
+        expression: total_revenue
+        aggregation: sum
+        format: currency
+        allowed_dimensions: [performance_route, performance_flight, performance_date, performance_fare_class, performance_weekday]
+        certification: draft
+        owner: Finance
+
+  - name: forward_inventory
+    description: Point-in-time fare-class inventory snapshots for future and current flights.
+    table: public.pp_fare_class_history
+    primary_key: [capture_date, flight_date, flight_no, fare_class_code]
+    default_time_dimension: inventory_flight_date
+    certification: verified
+    sensitivity: confidential
+    required_filter_dimensions: [capture_date]
+    metadata:
+      snapshot_behavior: append_only_daily_capture
+      missing_capture_semantics: unknown_not_zero
+      query_rule: Always constrain capture_date and flight_date; use one capture per requested as-of comparison.
+    dimensions:
+      - name: capture_date
+        label: Snapshot date
+        description: Date the inventory snapshot was captured.
+        expression: capture_date
+        type: date
+        is_time: true
+      - name: inventory_flight_date
+        label: Inventory flight date
+        description: Departure date for the inventory snapshot.
+        expression: flight_date
+        type: date
+        is_time: true
+      - name: inventory_flight
+        label: Inventory flight number
+        description: Flight number in the inventory snapshot.
+        expression: flight_no
+        type: string
+      - name: inventory_route
+        label: Inventory route
+        description: Sector recorded with the inventory capture.
+        expression: sector
+        type: string
+        synonyms: [inventory sector]
+      - name: inventory_fare_class
+        label: Inventory fare class
+        description: Fare class inventory bucket.
+        expression: fare_class_code
+        type: string
+    metrics:
+      - name: sold_seats
+        label: Sold seats
+        description: Seats sold in an inventory snapshot; use the latest capture per flight/class for current state.
+        expression: sold_seats
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [capture_date, inventory_flight_date, inventory_flight, inventory_route, inventory_fare_class]
+        certification: verified
+        owner: Revenue Management
+      - name: remaining_inventory
+        label: Remaining seats
+        description: Remaining seats in an inventory snapshot; current questions require latest capture per flight/class.
+        expression: remaining_seats
+        aggregation: sum
+        format: integer
+        synonyms: [remaining seats, availability]
+        allowed_dimensions: [capture_date, inventory_flight_date, inventory_flight, inventory_route, inventory_fare_class]
+        certification: verified
+        owner: Revenue Management
+      - name: authorized_capacity
+        label: Authorized seats
+        description: Authorized fare-class seats, which may not equal physical aircraft capacity.
+        expression: authorized_units
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [capture_date, inventory_flight_date, inventory_flight, inventory_route, inventory_fare_class]
+        certification: verified
+        owner: Revenue Management
+
+  - name: current_inventory
+    description: Current flight-date-sector-RBD sold and authorized state; not historical as-of inventory.
+    table: public.pp_rbd_inventory_daily
+    primary_key: [flight_date, flight_no, sector, rbd]
+    default_time_dimension: current_inventory_date
+    certification: verified
+    sensitivity: confidential
+    metadata:
+      snapshot_behavior: current_upsert
+      missing_value_semantics: unknown_not_zero
+      freshness_fields: [sold_synced_at, alloc_synced_at]
+    dimensions:
+      - name: current_inventory_date
+        label: Current inventory flight date
+        description: Departure date represented by the current inventory state.
+        expression: flight_date
+        type: date
+        is_time: true
+      - name: current_inventory_route
+        label: Current inventory route
+        description: Sector for the current RBD state.
+        expression: sector
+        type: string
+      - name: current_inventory_flight
+        label: Current inventory flight
+        description: Flight number for the current RBD state.
+        expression: flight_no
+        type: string
+      - name: current_inventory_rbd
+        label: Current inventory RBD
+        description: Reservation booking designator.
+        expression: rbd
+        type: string
+    metrics:
+      - name: current_inventory_sold
+        label: Current inventory sold seats
+        description: Sum of non-null current sold seats; coverage must be checked when source values are null.
+        expression: sold_seats
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [current_inventory_date, current_inventory_route, current_inventory_flight, current_inventory_rbd]
+        certification: verified
+        owner: Revenue Management
+      - name: current_inventory_authorized
+        label: Current authorized inventory
+        description: Sum of non-null authorized RBD units; this is not certified physical aircraft capacity.
+        expression: authorized_units
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [current_inventory_date, current_inventory_route, current_inventory_flight, current_inventory_rbd]
+        certification: verified
+        owner: Revenue Management
+      - name: current_inventory_remaining
+        label: Current remaining inventory
+        description: Authorized minus sold over RBD rows where both inputs are present; incomplete rows are excluded, not treated as zero.
+        expression: SUM(authorized_units - sold_seats) FILTER (WHERE authorized_units IS NOT NULL AND sold_seats IS NOT NULL)
+        aggregation: expression
+        format: integer
+        synonyms: [current remaining seats]
+        allowed_dimensions: [current_inventory_date, current_inventory_route, current_inventory_flight, current_inventory_rbd]
+        additive: false
+        certification: verified
+        owner: Revenue Management
+
+  - name: sector_sales_contribution
+    description: Revenue Compass agency-sector-day actuals from the separate Sales Report pipeline.
+    table: public.rt_agency_sector_daily
+    primary_key: [agency_key, sector, sale_date]
+    default_time_dimension: contribution_date
+    certification: verified
+    sensitivity: confidential
+    metadata:
+      snapshot_behavior: current_daily_upsert
+      reconciliation_status: separate_pipeline_from_canonical_pnr
+    dimensions:
+      - name: contribution_date
+        label: Contribution sale date
+        description: Typed Revenue Compass reporting/sale date.
+        expression: sale_date
+        type: date
+        is_time: true
+      - name: contribution_route
+        label: Contribution route
+        description: Sector contribution dimension.
+        expression: sector
+        type: string
+      - name: contribution_zone_id
+        label: Contribution zone ID
+        description: Denormalized hierarchy scope captured when the row was synchronized.
+        expression: zone_id
+        type: number
+        sensitivity: confidential
+      - name: contribution_territory_id
+        label: Contribution territory ID
+        description: Denormalized hierarchy scope captured when the row was synchronized.
+        expression: territory_id
+        type: number
+        sensitivity: confidential
+      - name: contribution_pos_id
+        label: Contribution POS ID
+        description: Denormalized POS scope; null represents an unmapped source row.
+        expression: pos_id
+        type: number
+        sensitivity: confidential
+    metrics:
+      - name: contribution_fit_passengers
+        label: FIT passengers
+        description: Additive FIT/non-group passenger total from Revenue Compass.
+        expression: fit_sold
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [contribution_date, contribution_route, contribution_zone_id, contribution_territory_id, contribution_pos_id]
+        certification: verified
+        owner: Revenue Management
+      - name: contribution_group_passengers
+        label: Group passengers
+        description: Additive group passenger total from Revenue Compass.
+        expression: group_sold
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [contribution_date, contribution_route, contribution_zone_id, contribution_territory_id, contribution_pos_id]
+        certification: verified
+        owner: Revenue Management
+      - name: contribution_total_passengers
+        label: Total contributed passengers
+        description: Source total; never add it to FIT and group components.
+        expression: total_sold
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [contribution_date, contribution_route, contribution_zone_id, contribution_territory_id, contribution_pos_id]
+        certification: verified
+        owner: Revenue Management
+      - name: contribution_total_revenue
+        label: Total contributed revenue
+        description: Source total revenue from Revenue Compass; do not substitute it for canonical PNR revenue.
+        expression: total_revenue
+        aggregation: sum
+        format: currency
+        allowed_dimensions: [contribution_date, contribution_route, contribution_zone_id, contribution_territory_id, contribution_pos_id]
+        certification: verified
+        owner: Revenue Management
+
+  - name: ancillary_sales
+    description: POS-sector-departure-day ancillary rollup derived from PNR source fields.
+    table: public.anc_agency_sector_daily
+    primary_key: [pos_value, sector, sale_date]
+    default_time_dimension: ancillary_departure_date
+    certification: verified
+    sensitivity: confidential
+    metadata:
+      date_semantics: sale_date_column_is_departure_date
+      agency_mapping: inferred_pos_text_with_nullable_hierarchy
+    dimensions:
+      - name: ancillary_departure_date
+        label: Ancillary departure date
+        description: Departure/reporting date despite the physical column name sale_date.
+        expression: sale_date
+        type: date
+        is_time: true
+      - name: ancillary_route
+        label: Ancillary route
+        description: Sector for the ancillary rollup.
+        expression: sector
+        type: string
+      - name: ancillary_zone_id
+        label: Ancillary zone ID
+        description: Resolved hierarchy scope; null means the source POS was unmapped.
+        expression: zone_id
+        type: number
+        sensitivity: confidential
+      - name: ancillary_territory_id
+        label: Ancillary territory ID
+        description: Resolved hierarchy scope.
+        expression: territory_id
+        type: number
+        sensitivity: confidential
+      - name: ancillary_pos_id
+        label: Ancillary POS ID
+        description: Resolved POS scope.
+        expression: pos_id
+        type: number
+        sensitivity: confidential
+    metrics:
+      - name: ancillary_revenue
+        label: Total ancillary revenue
+        description: Sum of the seven governed ancillary buckets; do not add the buckets again.
+        expression: ancillary_total
+        aggregation: sum
+        format: currency
+        synonyms: [ancillary sales]
+        allowed_dimensions: [ancillary_departure_date, ancillary_route, ancillary_zone_id, ancillary_territory_id, ancillary_pos_id]
+        certification: verified
+        owner: Revenue Management
+      - name: ancillary_passengers
+        label: Ancillary source passengers
+        description: Passenger seats in the ancillary rollup; not a redemption count.
+        expression: pax
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [ancillary_departure_date, ancillary_route, ancillary_zone_id, ancillary_territory_id, ancillary_pos_id]
+        certification: verified
+        owner: Revenue Management
+
+  - name: group_pipeline
+    description: Current group-request header state; historical status transitions and request-to-booking attribution are unavailable.
+    table: public.group_requests
+    primary_key: [external_id]
+    default_time_dimension: group_requested_date
+    certification: verified
+    sensitivity: confidential
+    metadata:
+      snapshot_behavior: current_request_state_upsert
+      conversion_rule: status_id_6_pending_owner_confirmation
+      restricted_fields: [request_code, agency_code, agency_name, contact_email, contact_mobile, requested_by, raw]
+    dimensions:
+      - name: group_requested_date
+        label: Group requested date
+        description: Request date stored as text; invalid values must be quarantined before typed comparison.
+        expression: requested_date
+        type: string
+        is_time: true
+      - name: group_travel_date
+        label: Group header travel date
+        description: Header travel date stored as text; use route legs for multi-leg analysis.
+        expression: travel_date
+        type: string
+        is_time: true
+      - name: group_status_id
+        label: Group status ID
+        description: Current upstream status code; status 6 is the application approval rule pending owner confirmation.
+        expression: status_id
+        type: number
+      - name: group_trip_type
+        label: Group trip type
+        description: Current request journey type.
+        expression: trip_type
+        type: string
+    metrics:
+      - name: group_request_count
+        label: Group requests
+        description: Distinct current group request headers.
+        expression: external_id
+        aggregation: count_distinct
+        format: integer
+        allowed_dimensions: [group_requested_date, group_travel_date, group_status_id, group_trip_type]
+        certification: verified
+        owner: Group Sales
+      - name: group_requested_passengers
+        label: Requested group passengers
+        description: Request-header passenger total; never sum after expanding route legs.
+        expression: pax_count
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [group_requested_date, group_travel_date, group_status_id, group_trip_type]
+        certification: verified
+        owner: Group Sales
+      - name: group_quoted_value
+        label: Current quoted group value
+        description: Current request-level quoted amount; quote-version history is unavailable.
+        expression: total_quoted
+        aggregation: sum
+        format: currency
+        allowed_dimensions: [group_requested_date, group_travel_date, group_status_id, group_trip_type]
+        certification: verified
+        owner: Group Sales
+      - name: group_approved_value
+        label: Current approved group value
+        description: Current request-level approved amount; fallback and currency rules require owner confirmation.
+        expression: total_approved
+        aggregation: sum
+        format: currency
+        allowed_dimensions: [group_requested_date, group_travel_date, group_status_id, group_trip_type]
+        certification: verified
+        owner: Group Sales
+
+  - name: forward_sector_position
+    description: Current sector-day Forward Sales Index rollup and deterministic benchmark context; not a trained forecast.
+    table: public.fsi_sector_daily
+    primary_key: [sector, flight_date]
+    default_time_dimension: forward_departure_date
+    certification: verified
+    sensitivity: confidential
+    metadata:
+      snapshot_behavior: current_rollup_no_observation_history
+      analytical_class: deterministic_heuristic_not_forecast
+    dimensions:
+      - name: forward_departure_date
+        label: Forward departure date
+        description: Future or current flight date at sector-day grain.
+        expression: flight_date
+        type: date
+        is_time: true
+      - name: forward_route
+        label: Forward route
+        description: Sector at the FSI natural grain.
+        expression: sector
+        type: string
+      - name: forward_capacity_source
+        label: Forward capacity source
+        description: Provenance category for current authorized capacity.
+        expression: capacity_source
+        type: string
+      - name: forward_weekday
+        label: Forward departure weekday
+        description: ISO weekday derived from the forward departure date for weekday-pattern screening.
+        expression: EXTRACT(ISODOW FROM flight_date)
+        type: number
+        synonyms: [forward weekday]
+    metrics:
+      - name: forward_sold
+        label: Forward sold seats
+        description: Current FSI sold total; it is not the canonical displayed PNR ticket KPI.
+        expression: current_sold
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [forward_departure_date, forward_route, forward_capacity_source, forward_weekday]
+        certification: verified
+        owner: Revenue Management
+      - name: forward_revenue
+        label: Forward FSI revenue
+        description: Current FSI revenue from its own pipeline; not canonical PNR booked revenue.
+        expression: current_revenue
+        aggregation: sum
+        format: currency
+        allowed_dimensions: [forward_departure_date, forward_route, forward_capacity_source, forward_weekday]
+        certification: verified
+        owner: Revenue Management
+      - name: forward_authorized_capacity
+        label: Forward authorized capacity
+        description: Current FSI authorized capacity; null means unavailable and it is not certified physical capacity.
+        expression: capacity
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [forward_departure_date, forward_route, forward_capacity_source, forward_weekday]
+        certification: verified
+        owner: Revenue Management
+      - name: forward_remaining
+        label: Forward seats available
+        description: Current FSI capacity minus sold where capacity is known.
+        expression: seats_available
+        aggregation: sum
+        format: integer
+        allowed_dimensions: [forward_departure_date, forward_route, forward_capacity_source, forward_weekday]
+        certification: verified
+        owner: Revenue Management
+      - name: forward_load_factor
+        label: Weighted forward load factor
+        description: Sum of current sold divided by sum of known authorized capacity; expressed as a decimal from zero to one.
+        expression: SUM(current_sold) FILTER (WHERE capacity IS NOT NULL) / NULLIF(SUM(capacity), 0)
+        aggregation: expression
+        format: percent
+        synonyms: [forward lf]
+        allowed_dimensions: [forward_departure_date, forward_route, forward_capacity_source, forward_weekday]
+        additive: false
+        certification: verified
+        owner: Revenue Management
+      - name: forward_yield
+        label: Weighted forward yield
+        description: Current FSI revenue divided by current sold seats; do not average stored row yields.
+        expression: SUM(current_revenue) / NULLIF(SUM(current_sold), 0)
+        aggregation: expression
+        format: currency
+        synonyms: [forward yield, current yield]
+        allowed_dimensions: [forward_departure_date, forward_route, forward_capacity_source, forward_weekday]
+        additive: false
+        certification: verified
+        owner: Revenue Management
+
+  - name: current_competitor_fares
+    description: Current own and competitor fare versions for the requested market.
+    table: public.pp_competitor_fares
+    primary_key: [id, version]
+    default_time_dimension: competitor_departure_date
+    certification: verified
+    sensitivity: confidential
+    default_filters:
+      - field: competitor_is_current
+        operator: eq
+        value: true
+    metadata:
+      snapshot_behavior: versioned_current_rows
+      route_rule: filter_requested_market_using_query_sector
+    dimensions:
+      - name: competitor_market
+        label: Competitor requested market
+        description: Requested market used to obtain the comparison; preferred route filter.
+        expression: query_sector
+        type: string
+      - name: competitor_native_route
+        label: Competitor native sector
+        description: Native flight sector, which may differ from the requested market.
+        expression: sector
+        type: string
+      - name: competitor_departure_date
+        label: Competitor fare date
+        description: Travel/departure date for the observed fare.
+        expression: fare_date
+        type: date
+        is_time: true
+      - name: competitor_operator
+        label: Competitor operator category
+        description: Broad own/OAL source label, not a detailed carrier identity.
+        expression: operator
+        type: string
+      - name: competitor_is_current
+        label: Current fare version
+        description: Governance-only version flag; all queries receive a mandatory true filter.
+        expression: is_current
+        type: boolean
+    metrics:
+      - name: current_minimum_fare
+        label: Current minimum observed fare
+        description: Minimum positive current fare at the requested grouping; comparability rules remain owner-governed.
+        expression: price
+        aggregation: min
+        format: currency
+        synonyms: [competitor fare]
+        allowed_dimensions: [competitor_market, competitor_native_route, competitor_departure_date, competitor_operator]
+        additive: false
+        certification: verified
+        owner: Revenue Management
+
+  - name: competitor_fare_history
+    description: Daily point-in-time own and competitor fare captures; multiple sites and flights require explicit grouping.
+    table: public.pp_competitor_fare_history
+    primary_key: [capture_date, sector, departure_date, airline_code, outbound_flight, site_code]
+    default_time_dimension: competitor_capture_date
+    certification: verified
+    sensitivity: confidential
+    required_filter_dimensions: [competitor_capture_date]
+    metadata:
+      snapshot_behavior: append_only_daily_capture
+      missing_capture_semantics: unknown_not_zero
+    dimensions:
+      - name: competitor_capture_date
+        label: Competitor capture date
+        description: Observation date; always constrain it for historical fare queries.
+        expression: capture_date
+        type: date
+        is_time: true
+      - name: historical_competitor_departure_date
+        label: Historical competitor departure date
+        description: Travel date associated with a historical fare capture.
+        expression: departure_date
+        type: date
+        is_time: true
+      - name: historical_competitor_market
+        label: Historical competitor market
+        description: Requested market/sector for the historical capture.
+        expression: sector
+        type: string
+      - name: competitor_airline_code
+        label: Competitor airline code
+        description: Carrier code for the captured itinerary.
+        expression: airline_code
+        type: string
+      - name: competitor_stop_count
+        label: Competitor stop count
+        description: Number of stops; use zero for governed direct-flight comparisons.
+        expression: outbound_stop
+        type: number
+    metrics:
+      - name: historical_minimum_fare
+        label: Historical minimum observed fare
+        description: Minimum captured outbound fare at the requested carrier/site/capture grouping.
+        expression: outbound_fare
+        aggregation: min
+        format: currency
+        allowed_dimensions: [competitor_capture_date, historical_competitor_departure_date, historical_competitor_market, competitor_airline_code, competitor_stop_count]
+        additive: false
+        certification: verified
+        owner: Revenue Management
+
+  - name: offer_definitions
+    description: Versioned revenue-management offer definitions and targets; not exposure, redemption, payout, ROI, or uplift.
+    table: public.rm_offers
+    primary_key: [id]
+    default_time_dimension: offer_departure_date
+    certification: verified
+    sensitivity: confidential
+    metadata:
+      outcome_data_available: false
+      current_rule: inclusive_validity_then_latest_created_at_per_flight_departure
+    dimensions:
+      - name: offer_departure_date
+        label: Offer flight departure date
+        description: Target flight departure date.
+        expression: departure_date
+        type: date
+        is_time: true
+      - name: offer_route
+        label: Offer route
+        description: Targeted sector.
+        expression: sector
+        type: string
+      - name: offer_flight
+        label: Offer flight
+        description: Targeted flight number.
+        expression: flight_number
+        type: string
+      - name: offer_valid_from
+        label: Offer valid from
+        description: Inclusive offer validity start date.
+        expression: start_date
+        type: date
+        is_time: true
+      - name: offer_valid_to
+        label: Offer valid to
+        description: Inclusive offer validity end date.
+        expression: end_date
+        type: date
+        is_time: true
+    metrics:
+      - name: offer_definition_count
+        label: Offer definition versions
+        description: Count of published offer-definition versions, not exposures or redemptions.
+        expression: id
+        aggregation: count_distinct
+        format: integer
+        allowed_dimensions: [offer_departure_date, offer_route, offer_flight, offer_valid_from, offer_valid_to]
+        certification: verified
+        owner: Revenue Management
+      - name: offer_face_value
+        label: Offer face value
+        description: Average configured amount per selected offer definition; its payout unit requires owner confirmation.
+        expression: amount_inr
+        aggregation: avg
+        format: currency
+        allowed_dimensions: [offer_departure_date, offer_route, offer_flight, offer_valid_from, offer_valid_to]
+        additive: false
+        certification: draft
+        owner: Revenue Management
+
+  - name: flight_schedule
+    description: Flight schedule validity and time reference.
+    table: public.pp_flight_schedule
+    primary_key: [upstream_id]
+    certification: verified
+    sensitivity: confidential
+    metadata:
+      object_semantics: schedule_definition_not_operated_flight
+      timezone_status: pending_owner_confirmation
+    dimensions:
+      - name: schedule_route
+        label: Scheduled route
+        description: Origin and destination pair.
+        expression: origin || '-' || destination
+        type: string
+      - name: scheduled_flight
+        label: Scheduled flight
+        description: Scheduled flight number.
+        expression: flight_number
+        type: string
+      - name: departure_time
+        label: Departure time
+        description: Expected departure time represented as a raw string.
+        expression: dep_time
+        type: string
+      - name: operation_frequency
+        label: Operation frequency
+        description: Raw source representation of operating weekdays.
+        expression: operation_freq
+        type: string
+    metrics:
+      - name: scheduled_flights
+        label: Scheduled flight records
+        description: Count of schedule records, not operated flight legs.
+        expression: upstream_id
+        aggregation: count_distinct
+        format: integer
+        allowed_dimensions: [schedule_route, scheduled_flight, departure_time, operation_frequency]
+        certification: verified
+        owner: Network Planning
+
+joins: []

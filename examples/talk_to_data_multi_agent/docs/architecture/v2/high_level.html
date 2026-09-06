@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Talk to Data V2 High Level Architecture</title>
+  <style>
+    :root{--paper:#f3f0e8;--card:#fffdf8;--ink:#17252b;--muted:#637278;--line:#c5cec9;--teal:#08776e;--navy:#183f58;--blue:#2874a6;--amber:#bd6a18;--violet:#72539b;--green:#38785e}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(1420px,calc(100% - 32px));margin:28px auto 52px}header{display:flex;justify-content:space-between;align-items:end;gap:30px;margin-bottom:24px}h1{margin:2px 0;font:700 clamp(30px,4vw,54px)/1.04 Georgia,serif;letter-spacing:-.035em}.eyebrow{color:var(--teal);font-weight:850;letter-spacing:.14em;text-transform:uppercase}.intro{max-width:650px;color:var(--muted)}
+    .flow{display:grid;grid-template-columns:1fr 32px 1.25fr 32px 1.35fr 32px 1.1fr;align-items:stretch}.arrow{display:grid;place-items:center;color:var(--amber);font-size:28px;font-weight:900}.stage{padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--card);box-shadow:0 10px 28px #17252b0d}.stage h2{margin:8px 0 8px;font-size:19px}.stage p{margin:0;color:var(--muted)}.number{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--navy);color:white;font-weight:850}.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:13px}.chip{padding:5px 8px;border-radius:999px;background:#e9efec;color:#34514c;font-size:11px;font-weight:750}
+    .platform{margin-top:20px;padding:20px;border-radius:16px;background:var(--navy);color:white}.platform h2{margin:0 0 14px;font-size:19px}.services{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}.service{padding:13px;border:1px solid #ffffff29;border-radius:11px;background:#ffffff0b}.service strong{display:block;color:#7fe1d6;font-size:13px}.service span{color:#c5d1d5;font-size:11px}.data{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:20px}.domain{padding:16px;border-radius:13px;color:white}.domain strong{display:block;margin-bottom:5px}.domain span{font-size:12px;opacity:.83}.b2c{background:var(--blue)}.series{background:var(--amber)}.groups{background:var(--green)}.offers{background:var(--violet)}
+    .legend{display:grid;grid-template-columns:1.35fr 1fr;gap:14px;margin-top:20px}.note{padding:17px 19px;border:1px solid var(--line);border-radius:13px;background:var(--card);color:var(--muted)}.note strong{color:var(--ink)}
+    @media(max-width:1000px){header{display:block}.intro{margin-top:12px}.flow{grid-template-columns:1fr}.arrow{height:38px;transform:rotate(90deg)}.services,.data,.legend{grid-template-columns:1fr}}
+    @media print{body{background:white}main{width:100%;margin:0}.stage{box-shadow:none}.platform{background:white;color:var(--ink);border:1px solid var(--line)}.service strong{color:var(--ink)}.service span{color:var(--muted)}}
+  </style>
+</head>
+<body><main>
+  <header>
+    <div><div class="eyebrow">Implemented Runtime foundation · V2</div><h1>Executive airline<br>Talk to Data</h1></div>
+    <p class="intro">A governed conversational analytics system spanning B2C, Series, Groups, and Offer Management. Language models interpret and compose; semantic contracts, read-only execution, analytical methods, and validated model services determine what can be calculated and claimed.</p>
+  </header>
+
+  <section class="flow" aria-label="High-level V2 flow">
+    <article class="stage"><span class="number">1</span><h2>Executive conversation</h2><p>Free-form questions, minimal clarification, follow-up context, progress streaming, tables, charts, assumptions, confidence, and drill-downs.</p><div class="chips"><span class="chip">Agency lens</span><span class="chip">Sector lens</span><span class="chip">Role-aware</span></div></article>
+    <div class="arrow" aria-hidden="true">→</div>
+    <article class="stage"><span class="number">2</span><h2>Governed agent team</h2><p>Router, sufficiency planner, semantic query specialist, method executor, insight composer, and verifier exchange typed contracts and canonical semantic references.</p><div class="chips"><span class="chip">Bounded repair</span><span class="chip">Qualified-name normalization</span><span class="chip">No hidden reasoning</span></div></article>
+    <div class="arrow" aria-hidden="true">→</div>
+    <article class="stage"><span class="number">3</span><h2>Analytical execution graph</h2><p>Schema-validated nodes, separate result handles, parallel scheduling, scoped cache, query governance, versioned methods/model services, provenance, and checkpoints.</p><div class="chips"><span class="chip">PostgreSQL leases</span><span class="chip">Freshness bounded</span><span class="chip">Causal gates</span></div></article>
+    <div class="arrow" aria-hidden="true">→</div>
+    <article class="stage"><span class="number">4</span><h2>Evidence-led answer</h2><p>Claims link to certified metrics, source data, method and model versions, freshness, confidence, limitations, and audit history.</p><div class="chips"><span class="chip">Claim provenance</span><span class="chip">Policy checked</span></div></article>
+  </section>
+
+  <section class="data" aria-label="Airline business data products">
+    <div class="domain b2c"><strong>Normal B2C</strong><span>Booking lifecycle, agency and sector sales, revenue, fare, yield, cancellations, booking curves.</span></div>
+    <div class="domain series"><strong>Series</strong><span>Agreements, committed seats and fare, consumption, utilization, exposure, final flight outcome.</span></div>
+    <div class="domain groups"><strong>Groups</strong><span>Request event history, passengers, quote and negotiated fare, conversion, expiry, linked bookings.</span></div>
+    <div class="domain offers"><strong>Offer Management</strong><span>Campaign definition, target and exposure, uptake, incentive cost, baseline, outcome and attribution.</span></div>
+  </section>
+
+  <section class="platform" aria-label="Traccia Runtime platform services">
+    <h2>Traccia Runtime reusable control and execution plane</h2>
+    <div class="services">
+      <div class="service"><strong>Semantic system</strong><span>Governed query-to-graph planner; ratios, joins, fan-out, grains, snapshots, freshness, SCD validity and lineage</span></div>
+      <div class="service"><strong>Runtime orchestration</strong><span>Typed DAG, separate results, retries, cancellation, budgets, PostgreSQL checkpoints and leases</span></div>
+      <div class="service"><strong>Execution governance</strong><span>Purpose/auth, source trust, query quotas/fingerprint/cache, RLS and export controls</span></div>
+      <div class="service"><strong>Scoped performance cache</strong><span>Memory or Redis; global, tenant, user, session and run isolation</span></div>
+      <div class="service"><strong>Method and model registry</strong><span>Versioned schemas, requirements, health, drift, fallback, validation and approval</span></div>
+      <div class="service"><strong>Traccia assurance</strong><span>Graph/node/method/model/query spans plus golden tests, claim provenance and promotion gates</span></div>
+    </div>
+  </section>
+
+  <section class="legend">
+    <div class="note"><strong>Application boundary:</strong> airline marts, metrics, thresholds, analytical methods, question catalogues, and predictive models belong to the customer application. Traccia Runtime provides the reusable contracts and execution controls.</div>
+    <div class="note"><strong>Readiness rule:</strong> no answer is promoted unless its data, metric, analytical method, authorization, freshness, cache scope, and evaluation requirements pass.</div>
+  </section>
+</main></body>
+</html>

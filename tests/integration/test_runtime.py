@@ -1,4 +1,4 @@
-from agent_core.types.contracts import RunRequest, RunStatus
+from traccia_runtime.types.contracts import RunRequest, RunStatus
 
 
 async def test_end_to_end_direct_run(runtime) -> None:

@@ -8,6 +8,7 @@ Capabilities depend on the selected model and server. These adapter defaults are
 | Azure OpenAI | yes | yes | yes | yes | yes | model-dependent | Azure OpenAI |
 | Anthropic | yes | yes | yes | no native schema guarantee | no | yes | Messages |
 | DeepSeek | yes | yes | model-dependent | no strict guarantee | endpoint-dependent | no | OpenAI-compatible |
+| Mistral AI | yes | yes | model-dependent | model-dependent | yes | model-dependent | Mistral Chat/Embeddings |
 | Ollama | yes | yes | model-dependent | model-dependent | yes | model-dependent | OpenAI-compatible |
 | Hugging Face Inference | yes | yes | model-dependent | no guarantee | endpoint-dependent | model-dependent | OpenAI-compatible router |
 | Local Transformers | yes | completion only | no | no | no | no | in-process |
@@ -15,4 +16,3 @@ Capabilities depend on the selected model and server. These adapter defaults are
 | Mock | yes | yes | yes | yes | yes | yes | deterministic in-process |
 
 An unsupported requested feature fails with `CapabilityError` before provider invocation.
-

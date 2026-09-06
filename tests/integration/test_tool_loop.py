@@ -2,9 +2,9 @@ import asyncio
 
 from conftest import make_agent, make_runtime
 
-from agent_core.models.providers.mock import MockModelProvider, tool_call_response
-from agent_core.tools.contracts import SideEffect, Tool, ToolDefinition
-from agent_core.types.contracts import RunRequest, RunStatus
+from traccia_runtime.models.providers.mock import MockModelProvider, tool_call_response
+from traccia_runtime.tools.contracts import SideEffect, Tool, ToolDefinition
+from traccia_runtime.types.contracts import RunRequest, RunStatus
 
 
 async def test_model_tool_model_loop() -> None:

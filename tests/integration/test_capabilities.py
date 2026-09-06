@@ -1,9 +1,9 @@
 import pytest
 
-from agent_core.exceptions.errors import CapabilityError
-from agent_core.models.base import ModelRouter
-from agent_core.models.providers.mock import MockModelProvider
-from agent_core.types.contracts import Message, ModelProfile, ModelRequest, Role
+from traccia_runtime.exceptions.errors import CapabilityError
+from traccia_runtime.models.base import ModelRouter
+from traccia_runtime.models.providers.mock import MockModelProvider
+from traccia_runtime.types.contracts import Message, ModelProfile, ModelRequest, Role
 
 
 class TextOnlyProvider(MockModelProvider):

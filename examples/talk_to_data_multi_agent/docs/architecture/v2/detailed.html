@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Talk to Data V2 Detailed Architecture</title>
+  <style>
+    :root{--bg:#0f191e;--panel:#17262d;--node:#20333b;--ink:#eef4f2;--muted:#a6b6b5;--line:#40545c;--teal:#42cabb;--blue:#6bb8ef;--amber:#f3ad4e;--violet:#c196eb;--green:#79c79c;--red:#ef8580}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.42 Inter,ui-sans-serif,system-ui,sans-serif}main{width:min(1580px,calc(100% - 28px));margin:24px auto 48px}header{display:flex;justify-content:space-between;align-items:end;gap:28px;margin-bottom:20px}h1{margin:2px 0;font-size:clamp(28px,4vw,48px);letter-spacing:-.04em}.eyebrow{color:var(--teal);font-weight:850;letter-spacing:.12em;text-transform:uppercase}.intro{max-width:720px;color:var(--muted)}
+    .map{display:grid;grid-template-columns:145px repeat(6,minmax(170px,1fr));border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--panel)}.label{padding:17px 13px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);color:var(--teal);font-size:12px;font-weight:850;letter-spacing:.09em;text-transform:uppercase}.lane{grid-column:2/-1;display:grid;grid-template-columns:repeat(6,minmax(170px,1fr));min-height:142px;border-bottom:1px solid var(--line)}.lane.end,.label.end{border-bottom:0}.cell{position:relative;padding:10px;border-right:1px dashed #40545c99}.cell:last-child{border-right:0}.node{height:100%;min-height:115px;padding:13px;border:1px solid #50656d;border-radius:11px;background:var(--node)}.node strong{display:block;margin:3px 0 6px;font-size:14px}.node span{display:block;color:var(--muted);font-size:11px}.node em{display:inline-block;margin-top:8px;color:var(--blue);font-size:10px;font-style:normal;font-weight:800}.step{float:right;display:grid;place-items:center;width:23px;height:23px;margin-left:5px;border-radius:50%;background:var(--teal);color:#071511;font-size:11px;font-weight:900}.arrow:after{content:'→';position:absolute;z-index:3;right:-10px;top:50%;color:var(--amber);font-size:22px;font-weight:900}.data{border-color:#397f74;background:#173831}.agent{border-color:#39779e;background:#18364a}.method{border-color:#8c6c38;background:#3a3020}.model{border-color:#75538e;background:#30263b}.guard{border-color:#9b5551;background:#3b2526}.output{border-color:#4a8262;background:#1f372b}
+    .contracts{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:16px}.contract{padding:13px;border-radius:10px;border-top:3px solid var(--blue);background:var(--panel)}.contract b{color:var(--blue);font-size:12px}.contract p{margin:4px 0 0;color:var(--muted);font-size:10px}.rules{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}.rule{padding:15px 17px;border:1px solid var(--line);border-radius:12px;color:var(--muted)}.rule strong{color:var(--ink)}
+    @media(max-width:1200px){header{display:block}.intro{margin-top:10px}.map{grid-template-columns:105px 1fr}.lane{grid-column:2;grid-template-columns:1fr}.cell{border-right:0;border-bottom:1px dashed var(--line)}.arrow:after{content:'↓';right:50%;top:auto;bottom:-14px}.contracts,.rules{grid-template-columns:1fr}}
+    @media print{body{background:white;color:#111}.map,.contract,.rule{background:white}.node,.node.data,.node.agent,.node.method,.node.model,.node.guard,.node.output{background:white;color:#111}.node strong,.rule strong{color:#111}.node span,.contract p,.rule{color:#555}}
+  </style>
+</head>
+<body><main>
+  <header>
+    <div><div class="eyebrow">Implemented Runtime foundation · V2 detailed view</div><h1>Governed conversational airline analytics</h1></div>
+    <p class="intro">The Runtime now supplies a resumable typed analytical graph, versioned method and analytical-model contracts, query governance, deterministic evaluation, and distributed work leases. Customer data products and airline methods shown here remain deployment inputs, not Runtime business logic.</p>
+  </header>
+
+  <section class="map" aria-label="Detailed V2 architecture swimlanes">
+    <div class="label">Customer data plane</div><div class="lane">
+      <div class="cell arrow"><div class="node data"><i class="step">1</i><strong>Operational sources</strong><span>PNR, inventory, schedule, Series, Groups, campaign, agency, capacity, cost, market and event feeds.</span><em>Customer owned</em></div></div>
+      <div class="cell arrow"><div class="node data"><i class="step">2</i><strong>Quality and conformance</strong><span>Stable agency, route, flight and date keys; normalized status, currency and timestamps; reconciliation and freshness tests.</span><em>Data platform</em></div></div>
+      <div class="cell"><div class="node data"><i class="step">3</i><strong>Analytical marts</strong><span>B2C sales, flight snapshots, Series commitment/consumption, Group events, campaign exposure/outcomes.</span><em>Read-only products</em></div></div>
+      <div class="cell"><div class="node data"><strong>Model feature sets</strong><span>Booking curves, comparable flights, elasticity, costs, constraints, controls and treatment history.</span><em>Conditional</em></div></div>
+      <div class="cell"><div class="node data"><strong>Catalog and lineage</strong><span>Owners, classifications, schemas, sources, freshness SLA, column lineage and approved join relationships.</span></div></div>
+      <div class="cell"><div class="node guard"><strong>Database controls</strong><span>Read-only role, RLS, column masking, tenant scope, statement limits and warehouse quotas.</span></div></div>
+    </div>
+
+    <div class="label">Semantic and method plane</div><div class="lane">
+      <div class="cell"><div class="node data"><strong>Business ontology</strong><span>Agency × Sector crossed with B2C, Series, Groups and Offer Management.</span></div></div>
+      <div class="cell arrow"><div class="node data"><i class="step">4</i><strong>Semantic layer V2</strong><span>Certified dimensions, metrics, grains, joins, calendars, snapshots, ratios, freshness, SCD validity, policies and digest.</span></div></div>
+      <div class="cell arrow"><div class="node method"><i class="step">5</i><strong>Method registry</strong><span>Comparison, contribution, concentration, funnel, risk, uplift and ranking methods with typed requirements.</span></div></div>
+      <div class="cell"><div class="node model"><strong>Model registry</strong><span>Forecast, causal, simulation and optimization services with version, health, lineage, validation and drift state.</span></div></div>
+      <div class="cell"><div class="node data"><strong>Question/evaluation catalog</strong><span>Golden intents, plans, SQL constraints, numerical results, permitted claims and business thresholds.</span></div></div>
+      <div class="cell"><div class="node guard"><strong>Promotion policy</strong><span>Only certified metrics and validated methods/models may serve production executive answers.</span></div></div>
+    </div>
+
+    <div class="label">Conversation and agents</div><div class="lane">
+      <div class="cell arrow"><div class="node output"><i class="step">6</i><strong>Executive dashboard</strong><span>Conversation history, suggestions, minimal clarification, reconnectable SSE, drill-downs and approvals.</span></div></div>
+      <div class="cell arrow"><div class="node agent"><i class="step">7</i><strong>Intent router</strong><span>Resolves business terms, normalizes model-qualified semantic references, and classifies descriptive, diagnostic, predictive, causal, optimization or discovery intent.</span></div></div>
+      <div class="cell arrow"><div class="node agent"><i class="step">8</i><strong>Sufficiency planner</strong><span>Checks data, metrics, time basis, thresholds, method/model availability and authorization before planning.</span></div></div>
+      <div class="cell"><div class="node agent"><strong>Semantic query specialist</strong><span>Produces governed queries rather than choosing arbitrary tables and joins.</span></div></div>
+      <div class="cell"><div class="node agent"><strong>Insight composer</strong><span>Explains measured results while preserving evidence, confidence, assumptions and limitations.</span></div></div>
+      <div class="cell"><div class="node agent"><strong>Claim verifier</strong><span>Reconciles numbers and rejects unsupported, stale, unauthorized or causal claims.</span></div></div>
+    </div>
+
+    <div class="label">Analytical execution graph</div><div class="lane">
+      <div class="cell arrow"><div class="node agent"><i class="step">9</i><strong>Semantic graph planning</strong><span>Compiles independent result sets, lowers explicit transformations, validates finite dependencies, schemas, budgets and concurrency.</span></div></div>
+      <div class="cell arrow"><div class="node data"><i class="step">10</i><strong>Semantic query nodes</strong><span>Production compiler emits parameterized PostgreSQL; enforces freshness, SCD and semi-additive rules; rejects unsafe fan-out or implicit compound analytics; and records models, joins, lineage and explanation.</span></div></div>
+      <div class="cell arrow"><div class="node method"><i class="step">11</i><strong>Transform nodes</strong><span>Separate typed result handles feed relationship-checked joins, comparisons, allowlisted calculations, methods and rankings.</span></div></div>
+      <div class="cell arrow"><div class="node model"><i class="step">12</i><strong>Model nodes</strong><span>Invoke pinned forecast, causal, simulation or optimization services only when their requirements pass.</span></div></div>
+      <div class="cell arrow"><div class="node guard"><i class="step">13</i><strong>Verification nodes</strong><span>Freshness, numerical reconciliation, claim-to-cell provenance, uncertainty and policy checks.</span></div></div>
+      <div class="cell"><div class="node output"><i class="step">14</i><strong>Response contract</strong><span>Narrative, tables, charts, SQL policy view, citations, method/model card, warnings, confidence and next actions.</span></div></div>
+    </div>
+
+    <div class="label">Performance and cache plane</div><div class="lane">
+      <div class="cell"><div class="node guard"><strong>Scope policy</strong><span>Each namespace independently selects global, tenant, user, session or run isolation. Authorization fingerprints can further partition entries.</span></div></div>
+      <div class="cell"><div class="node data"><strong>Capability and retrieval cache</strong><span>Provider capabilities are globally shared; schema retrieval is tenant-scoped and avoids repeated embedding and vector-search work.</span></div></div>
+      <div class="cell"><div class="node data"><strong>Read-only query cache</strong><span>User-scoped SQL results use short TTLs, data-version material and bounded payloads. Writes and side effects never enter this path.</span></div></div>
+      <div class="cell"><div class="node agent"><strong>Model and tool cache</strong><span>Exact non-streaming model responses and idempotent read tools are user-scoped. Streaming, raw responses and side-effecting tools bypass caching.</span></div></div>
+      <div class="cell"><div class="node method"><strong>Stampede protection</strong><span>Concurrent identical misses share one in-flight loader. Local LRU bounds memory while Redis supports multiple processes and replicas.</span></div></div>
+      <div class="cell"><div class="node guard"><strong>Secure invalidation</strong><span>Opaque hashed or HMAC keys, TTL, size limits, version tags, fail-open errors, and explicit tag invalidation protect correctness and privacy.</span></div></div>
+    </div>
+
+    <div class="label end">Traccia Runtime controls</div><div class="lane end">
+      <div class="cell"><div class="node"><strong>Durable graph + workers</strong><span>Memory/PostgreSQL checkpoints, SKIP LOCKED claims, leases, renewal, deduplication, retry, cancellation and safe partial recovery.</span></div></div>
+      <div class="cell"><div class="node"><strong>Identity and policy</strong><span>Tenant, user, role, purpose, metric/data allowlists, clarification and human approval.</span></div></div>
+      <div class="cell"><div class="node"><strong>Provider routing</strong><span>Cached capability discovery, health, fallback, rate limits, smaller role-specific models and cost/latency policy.</span></div></div>
+      <div class="cell"><div class="node"><strong>Data governance</strong><span>Source trust/completeness, purpose/auth, metric/column policy, query fingerprint/quotas/cache, export controls and retention.</span></div></div>
+      <div class="cell"><div class="node"><strong>Observability</strong><span>OpenTelemetry and Traccia conversation, agent, cache, query, method, model, policy, usage and truthful outcome spans.</span></div></div>
+      <div class="cell"><div class="node"><strong>Evaluation and audit</strong><span>Claim-to-cell reconciliation, golden plan/SQL/numeric/claim regression, score thresholds and promotion gates.</span></div></div>
+    </div>
+  </section>
+
+  <section class="contracts" aria-label="Key V2 contracts">
+    <div class="contract"><b>SemanticRequest</b><p>Certified metrics, dimensions, filters, time comparison, grain and policy context.</p></div>
+    <div class="contract"><b>AnalyticalGraph</b><p>Typed nodes, result handles, dependencies, budgets, requirements and termination.</p></div>
+    <div class="contract"><b>MethodManifest</b><p>Inputs, parameters, required data, implementation/model, validation and version.</p></div>
+    <div class="contract"><b>CachePolicy + Context</b><p>Namespace, scope, TTL, size, tenant, user, session, run and authorization boundary.</p></div>
+    <div class="contract"><b>EvidenceBundle</b><p>Results, cell provenance, source lineage, freshness, assumptions and uncertainty.</p></div>
+    <div class="contract"><b>VerifiedResponse</b><p>Claims, displays, citations, warnings, confidence, actions and approvals.</p></div>
+  </section>
+
+  <section class="rules">
+    <div class="rule"><strong>Separation of responsibility:</strong> the customer data platform owns ingestion and curated marts; the airline application owns semantics and analytical methods; Traccia Runtime owns contracts, orchestration, safety, durability and traceability.</div>
+    <div class="rule"><strong>Clarify or block:</strong> material ambiguity pauses the conversation. Missing data, an uncertified metric, an invalid plan, or an unavailable model produces a bounded explanation—not a fabricated answer.</div>
+    <div class="rule"><strong>Action boundary:</strong> analytical recommendations remain advisory. Any operational action uses a separately authorized side-effecting tool and a persisted approval checkpoint.</div>
+    <div class="rule"><strong>Cache boundary:</strong> cache scope follows the narrowest authorization boundary. Freshness and safety outrank hit rate; writes, destructive tools and raw provider payloads are never cached.</div>
+  </section>
+</main></body>
+</html>

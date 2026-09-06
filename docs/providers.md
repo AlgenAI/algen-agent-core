@@ -13,5 +13,6 @@ Translate provider errors to `ProviderError` with an `ErrorKind` and a correct `
 
 OpenAI-compatible providers can reuse `OpenAICompatibleProvider`. Native protocols should implement the interface directly or override payload/response/stream conversion. Capability declarations must be conservative and should be covered by contract tests.
 
-Secrets are references (`env://NAME`) resolved immediately before a request. Never accept or log literal secret configuration.
+`MistralProvider` is an example of a dedicated compatible adapter: it reuses normalized chat, tool, streaming, structured-output, and embedding handling while translating Mistral-specific multimodal image blocks. Configure it with `type: mistral` and an `env://MISTRAL_API_KEY` secret reference. Capability declarations can be narrowed in YAML for the selected Mistral model.
 
+Secrets are references (`env://NAME`) resolved immediately before a request. Never accept or log literal secret configuration.

@@ -3,9 +3,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agent_core.config.settings import ProviderSettings, load_settings
-from agent_core.exceptions.errors import ConfigurationError
-from agent_core.types.contracts import RunRequest
+from traccia_runtime.config.settings import AppSettings, ProviderSettings, load_settings
+from traccia_runtime.exceptions.errors import ConfigurationError
+from traccia_runtime.orchestration.container import build_container
+from traccia_runtime.types.contracts import RunRequest
 
 
 def test_literal_secret_is_rejected() -> None:
@@ -21,8 +22,51 @@ def test_unknown_configuration_is_rejected(tmp_path: Path) -> None:
 
 
 def test_nested_environment_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENT_CORE__API__PORT", "9000")
+    monkeypatch.setenv("TRACCIA_RUNTIME__API__PORT", "9000")
     assert load_settings().api.port == 9000
+
+
+def test_nested_traccia_environment_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRACCIA_RUNTIME__TELEMETRY__TRACCIA__ENABLED", "true")
+    monkeypatch.setenv("TRACCIA_RUNTIME__TELEMETRY__TRACCIA__SAMPLE_RATE", "0.25")
+    settings = load_settings()
+    assert settings.telemetry.traccia.enabled is True
+    assert settings.telemetry.traccia.sample_rate == 0.25
+
+
+def test_cache_configuration_supports_scoped_policies() -> None:
+    settings = AppSettings.model_validate(
+        {
+            "cache": {
+                "backend": "memory",
+                "policies": {
+                    "retrieval": {"enabled": True, "scope": "tenant", "ttl_seconds": 60},
+                    "query_results": {"enabled": True, "scope": "user", "ttl_seconds": 15},
+                },
+            }
+        }
+    )
+    assert settings.cache.policies["retrieval"].scope.value == "tenant"
+    assert settings.cache.policies["query_results"].scope.value == "user"
+
+
+def test_redis_cache_requires_environment_secret_reference() -> None:
+    with pytest.raises(ValidationError, match="requires redis_url"):
+        AppSettings.model_validate({"cache": {"backend": "redis"}})
+    with pytest.raises(ValidationError, match="env://"):
+        AppSettings.model_validate(
+            {"cache": {"backend": "redis", "redis_url": "redis://localhost:6379"}}
+        )
+
+
+def test_telemetry_content_capture_is_bounded_and_disabled_by_default() -> None:
+    settings = AppSettings()
+    assert settings.telemetry.include_content is False
+    assert settings.telemetry.max_content_chars == 16_384
+    with pytest.raises(ValidationError):
+        AppSettings.model_validate(
+            {"telemetry": {"include_content": True, "max_content_chars": 100}}
+        )
 
 
 def test_unknown_request_override_is_rejected() -> None:
@@ -34,3 +78,20 @@ def test_unknown_request_override_is_rejected() -> None:
             user_id="user",
             overrides={"unbounded_option": True},
         )
+
+
+def test_mistral_provider_configuration_is_valid() -> None:
+    settings = AppSettings.model_validate(
+        {
+            "providers": {
+                "mistral": {
+                    "type": "mistral",
+                    "api_key": "env://MISTRAL_API_KEY",
+                    "default_model": "mistral-small-latest",
+                }
+            }
+        }
+    )
+    assert settings.providers["mistral"].api_key == "env://MISTRAL_API_KEY"
+    providers = build_container(settings).runtime.router.providers()
+    assert tuple(provider.provider_id for provider in providers) == ("mistral",)

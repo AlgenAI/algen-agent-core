@@ -2,7 +2,7 @@ import asyncio
 
 from conftest import make_runtime
 
-from agent_core.types.contracts import RunRequest, RunStatus
+from traccia_runtime.types.contracts import RunRequest, RunStatus
 
 
 async def test_concurrent_runs_remain_isolated() -> None:

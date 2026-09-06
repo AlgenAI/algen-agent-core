@@ -3,9 +3,9 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "algen-agent-core"
+name = "traccia-runtime"
 version = "0.1.0"
-description = "Provider-neutral agent runtime and orchestration framework"
+description = "Traccia's provider-neutral development runtime for governed AI agents"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
@@ -25,8 +25,33 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["asyncpg>=0.29,<1"]
+pgvector = ["asyncpg>=0.29,<1", "pgvector>=0.3,<1"]
+talk-to-data = ["asyncpg>=0.29,<1", "pgvector>=0.3,<1", "traccia>=0.1.28,<0.2"]
 redis = ["redis>=5,<6"]
+auth = ["PyJWT[crypto]>=2.9,<3"]
 transformers = ["transformers>=4.44,<5", "torch>=2.4,<3"]
+traccia = ["traccia>=0.1.28,<0.2"]
+chroma = ["chromadb>=1.0,<2"]
+faiss = ["faiss-cpu>=1.9,<2", "numpy>=2,<3"]
+qdrant = ["qdrant-client>=1.12,<2"]
+langgraph = ["langgraph>=1,<2"]
+openai-agents = ["openai-agents>=0.6,<1"]
+autogen = ["autogen-agentchat>=0.7,<1"]
+crewai = ["crewai>=1,<2"]
+frameworks = [
+  "langgraph>=1,<2",
+  "openai-agents>=0.6,<1",
+  "autogen-agentchat>=0.7,<1",
+  "crewai>=1,<2",
+]
+vector-stores = [
+  "asyncpg>=0.29,<1",
+  "pgvector>=0.3,<1",
+  "chromadb>=1.0,<2",
+  "faiss-cpu>=1.9,<2",
+  "numpy>=2,<3",
+  "qdrant-client>=1.12,<2",
+]
 dev = [
   "mypy>=1.11,<2",
   "pytest>=8.3,<9",
@@ -36,14 +61,15 @@ dev = [
 ]
 
 [project.scripts]
-agent-core = "agent_core.api.app:main"
+traccia-runtime = "traccia_runtime.api.app:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_core"]
+packages = ["src/traccia_runtime"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = ["live: tests requiring external credentials"]
 
 [tool.ruff]
@@ -57,8 +83,8 @@ ignore = ["E501"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-packages = ["agent_core"]
+packages = ["traccia_runtime"]
 
 [[tool.mypy.overrides]]
-module = ["jsonschema", "yaml", "transformers", "opentelemetry.exporter.*"]
+module = ["jsonschema", "yaml", "transformers", "opentelemetry.exporter.*", "asyncpg", "redis", "redis.*", "pgvector", "pgvector.*", "chromadb", "faiss", "numpy", "qdrant_client", "qdrant_client.*", "agents", "jwt"]
 ignore_missing_imports = true

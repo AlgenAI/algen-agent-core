@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from agent_core.planning.contracts import ActionType, Plan, PlannedAction
+from traccia_runtime.planning.contracts import ActionType, Plan, PlannedAction
 
 
 def test_plan_rejects_forward_dependency() -> None:

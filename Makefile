@@ -8,5 +8,4 @@ lint:
 typecheck:
 	mypy src
 run:
-	agent-core
-
+	traccia-runtime

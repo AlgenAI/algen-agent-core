@@ -1,8 +1,8 @@
 import pytest
 
-from agent_core.exceptions.errors import ConflictError
-from agent_core.runtime.state_machine import validate_transition
-from agent_core.types.contracts import RunStatus
+from traccia_runtime.exceptions.errors import ConflictError
+from traccia_runtime.runtime.state_machine import validate_transition
+from traccia_runtime.types.contracts import RunStatus
 
 
 def test_legal_transition() -> None:

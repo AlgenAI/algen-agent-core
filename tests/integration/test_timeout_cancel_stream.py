@@ -2,8 +2,8 @@ import asyncio
 
 from conftest import make_runtime
 
-from agent_core.models.providers.mock import MockModelProvider
-from agent_core.types.contracts import RunRequest, RunStatus
+from traccia_runtime.models.providers.mock import MockModelProvider
+from traccia_runtime.types.contracts import RunRequest, RunStatus
 
 
 async def test_timeout_is_terminal() -> None:

@@ -1,7 +1,9 @@
-from agent_core.exceptions.errors import ProviderError
-from agent_core.models.base import ModelRouter
-from agent_core.models.providers.mock import MockModelProvider
-from agent_core.types.contracts import ErrorKind, Message, ModelProfile, ModelRequest, Role
+import pytest
+
+from traccia_runtime.exceptions.errors import ProviderError
+from traccia_runtime.models.base import ModelRouter
+from traccia_runtime.models.providers.mock import MockModelProvider
+from traccia_runtime.types.contracts import ErrorKind, Message, ModelProfile, ModelRequest, Role
 
 
 class FailingProvider(MockModelProvider):
@@ -23,3 +25,23 @@ async def test_router_falls_back_after_provider_failure() -> None:
     )
     assert response.message.text_content == "fallback"
 
+
+class ForbiddenProvider(MockModelProvider):
+    provider_id = "forbidden"
+
+    async def generate(self, request):
+        raise ProviderError("access denied", ErrorKind.AUTHORIZATION, False)
+
+
+async def test_router_preserves_single_provider_error_classification() -> None:
+    router = ModelRouter()
+    router.register_provider(ForbiddenProvider())
+
+    with pytest.raises(ProviderError) as captured:
+        await router.generate(
+            ModelRequest(messages=(Message.text(Role.USER, "x"),)),
+            (ModelProfile(name="only", provider="forbidden", model="x"),),
+        )
+
+    assert captured.value.error_kind == ErrorKind.AUTHORIZATION
+    assert captured.value.retryable is False

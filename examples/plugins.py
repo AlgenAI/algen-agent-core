@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_core.plugins.sdk import PluginManifest, plugin
-from agent_core.tools.contracts import SideEffect, Tool, ToolContext, ToolDefinition
+from traccia_runtime.plugins.sdk import PluginManifest, plugin
+from traccia_runtime.tools.contracts import SideEffect, Tool, ToolContext, ToolDefinition
 
 
 @plugin(PluginManifest(name="example.utilities", version="1.0.0", publisher="example"))

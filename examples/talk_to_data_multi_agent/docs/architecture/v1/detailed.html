@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Talk to Data - Detailed architecture</title>
+  <style>
+    :root { --bg:#10191d; --panel:#17252b; --ink:#edf2ee; --muted:#9dada8; --line:#405159; --teal:#36c4b5; --amber:#ffb24d; --blue:#70b7ef; --red:#ee7c75; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.4 Inter,ui-sans-serif,system-ui,sans-serif; }
+    main { width:min(1480px,calc(100% - 28px)); margin:26px auto 48px; }
+    header { display:flex; justify-content:space-between; gap:24px; align-items:end; margin-bottom:22px; }
+    h1 { margin:0; font-size:clamp(26px,4vw,46px); letter-spacing:-.04em; } header p { max-width:650px; color:var(--muted); }
+    .diagram { display:grid; grid-template-columns:150px repeat(5,minmax(170px,1fr)); border:1px solid var(--line); border-radius:16px; overflow:hidden; background:var(--panel); }
+    .lane-title { padding:18px 14px; color:var(--teal); font-weight:800; letter-spacing:.08em; text-transform:uppercase; border-right:1px solid var(--line); border-bottom:1px solid var(--line); }
+    .lane { grid-column:2/-1; display:grid; grid-template-columns:repeat(5,minmax(170px,1fr)); min-height:142px; border-bottom:1px solid var(--line); }
+    .lane:last-child { border-bottom:0; }
+    .cell { position:relative; padding:14px; border-right:1px dashed #405159aa; }
+    .cell:last-child { border-right:0; }
+    .node { height:100%; min-height:104px; padding:13px; border:1px solid #52656c; border-radius:11px; background:#203138; }
+    .node strong { display:block; color:var(--ink); font-size:15px; margin-bottom:5px; }
+    .node span { color:var(--muted); font-size:12px; }
+    .node.agent { border-color:#397e9e; background:#18364a; }
+    .node.guard { border-color:#8e6e39; background:#392f20; }
+    .node.data { border-color:#2d8178; background:#163632; }
+    .node.verify { border-color:#815f98; background:#31263a; }
+    .step { float:right; display:grid; place-items:center; width:23px; height:23px; margin-left:6px; border-radius:50%; background:var(--teal); color:#071311; font-weight:900; }
+    .arrow::after { content:'\2192'; position:absolute; right:-10px; top:50%; z-index:2; color:var(--amber); font-size:22px; font-weight:900; }
+    .contracts { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:18px; }
+    .contract { padding:14px; border-radius:10px; border-top:3px solid var(--blue); background:var(--panel); }
+    .contract b { color:var(--blue); } .contract p { color:var(--muted); margin:5px 0 0; font-size:12px; }
+    .footer { display:grid; grid-template-columns:2fr 1fr; gap:14px; margin-top:18px; }
+    .callout { padding:16px 18px; border:1px solid var(--line); border-radius:12px; color:var(--muted); }
+    .callout strong { color:var(--ink); }
+    @media(max-width:1100px){.diagram{grid-template-columns:110px 1fr}.lane{grid-template-columns:1fr;grid-column:2}.cell{border-right:0;border-bottom:1px dashed var(--line)}.arrow::after{content:'\2193';right:50%;top:auto;bottom:-15px}.contracts,.footer{grid-template-columns:1fr}header{display:block}}
+    @media print { body{background:white;color:#111}.diagram,.contract,.callout{background:white}.node,.node.agent,.node.guard,.node.data,.node.verify{background:white;color:#111}.node strong,.callout strong{color:#111} }
+  </style>
+</head>
+<body><main>
+  <header><div><div style="color:var(--teal);font-weight:800">DETAILED REFERENCE ARCHITECTURE</div><h1>One conversational analytics turn</h1></div><p>The workflow has a fixed maximum fan-out, explicit state transitions, validated contracts, read-only execution, and a hard distinction between model-generated plans and executable analytical code.</p></header>
+  <section class="diagram" aria-label="Detailed architecture swimlanes">
+    <div class="lane-title">Experience</div><div class="lane">
+      <div class="cell arrow"><div class="node"><i class="step">1</i><strong>Dashboard</strong><span>Conversation list, suggestions, message composer, reconnectable SSE, typed content renderer.</span></div></div>
+      <div class="cell"><div class="node"><i class="step">2</i><strong>Conversation API</strong><span>Tenant identity, durable user/assistant messages, background turn task, cancellation.</span></div></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+    </div>
+    <div class="lane-title">Orchestration</div><div class="lane">
+      <div class="cell arrow"><div class="node agent"><i class="step">3</i><strong>Router agent</strong><span>Maps intent to governed metrics and descriptive, diagnostic, anomaly, forecast, scenario, optimization, or discovery class.</span></div></div>
+      <div class="cell arrow"><div class="node agent"><i class="step">4</i><strong>Planner agent</strong><span>Checks sufficiency, chooses one analytical tool, emits no more than three independent query tasks.</span></div></div>
+      <div class="cell arrow"><div class="node agent"><i class="step">5</i><strong>SQL agents</strong><span>Parallel structured generation using only allowed tables and semantic definitions.</span></div></div>
+      <div class="cell arrow"><div class="node agent"><i class="step">9</i><strong>Insight agent</strong><span>Explains measured output while retaining assumptions, limits, provenance, and confidence.</span></div></div>
+      <div class="cell"><div class="node verify"><i class="step">10</i><strong>Verifier agent</strong><span>Rejects unsupported claims and returns a conservative corrected summary when needed.</span></div></div>
+    </div>
+    <div class="lane-title">Execution</div><div class="lane">
+      <div class="cell"><div class="node data"><strong>Semantic layer</strong><span>YAML definitions, stable aliases, metric owners, certification, allowed dimensions, joins, digest.</span></div></div>
+      <div class="cell"><div class="node data"><strong>Schema RAG</strong><span>pgvector hybrid retrieval over untrusted database documentation with source attribution.</span></div></div>
+      <div class="cell arrow"><div class="node guard"><i class="step">6</i><strong>SQL policy boundary</strong><span>Single SELECT/WITH, allowlisted tables, bound parameters, no comments, writes, or dangerous functions.</span></div></div>
+      <div class="cell arrow"><div class="node data"><i class="step">7</i><strong>Read-only PostgreSQL</strong><span>Dedicated role, transaction read-only, statement timeout, server-side row and response-size limits.</span></div></div>
+      <div class="cell"><div class="node guard"><i class="step">8</i><strong>Analytical plugin</strong><span>Deterministic summary, screen, correlation, sensitivity, baseline forecast, or model-required gate.</span></div></div>
+    </div>
+    <div class="lane-title">Runtime controls</div><div class="lane">
+      <div class="cell"><div class="node"><strong>Identity & policy</strong><span>Tenant/user scopes, content policy, budgets, data and model allowlists.</span></div></div>
+      <div class="cell"><div class="node"><strong>Durable state</strong><span>Conversations, runs, events, approvals, artifacts, tool ledger, recovery.</span></div></div>
+      <div class="cell"><div class="node"><strong>Provider routing</strong><span>Capabilities, fallbacks, retries, timeouts, rate limits, circuit breakers.</span></div></div>
+      <div class="cell"><div class="node"><strong>Telemetry</strong><span>OpenTelemetry plus Traccia spans, token/cost use, prompt and semantic versions.</span></div></div>
+      <div class="cell"><div class="node"><strong>Audit</strong><span>Immutable decisions and execution metadata, with redaction before egress.</span></div></div>
+    </div>
+  </section>
+  <section class="contracts" aria-label="Key contracts">
+    <div class="contract"><b>AnalyticsIntent</b><p>Interpretation, metrics, dimensions, horizon, scenario inputs, assumptions, evidence.</p></div>
+    <div class="contract"><b>AnalyticsPlan</b><p>Bounded queries, tool and parameters, blockers, required data, executable flag.</p></div>
+    <div class="contract"><b>AnalysisOutcome</b><p>Status, values, method/version, requirements, confidence interval, warnings.</p></div>
+    <div class="contract"><b>AnalysisReview</b><p>Approval, issues, corrected summary, bounded confidence.</p></div>
+  </section>
+  <section class="footer"><div class="callout"><strong>Pause paths:</strong> essential ambiguity becomes a persisted clarification turn. Missing analytical data or models becomes a bounded, explainable blocked result. Externally visible actions would use Runtime approval and tool-ledger semantics.</div><div class="callout"><strong>Termination:</strong> 2 clarifications, 3 query tasks, per-agent step/token/cost/time budgets, finite retries, cancellable execution.</div></section>
+</main></body>
+</html>

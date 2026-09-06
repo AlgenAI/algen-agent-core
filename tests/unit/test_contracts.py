@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from agent_core.types.contracts import AgentDefinition, ImageBlock, Message, ModelProfile, Role
+from traccia_runtime.types.contracts import AgentDefinition, ImageBlock, Message, ModelProfile, Role
 
 
 def test_message_helper_and_immutable_contract() -> None:
