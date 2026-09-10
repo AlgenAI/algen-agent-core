@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Talk to Data · Traccia</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/vega@6"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/vega-lite@6"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/vega-embed@7"></script>
   <style>
     :root {
       color-scheme: light;
@@ -60,7 +63,17 @@
     th, td { padding: 10px 12px; border-bottom: 1px solid #edf0ee; white-space: nowrap; }
     .notice { margin: 12px 0; padding: 10px 12px; border-radius: 9px; background: #eef5f1; color: #476057; font-size: 13px; }
     .notice.warning, .notice.error { background: #fff3dc; color: #795719; }
-    .bars { margin: 14px 0; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+    .chart-card { margin: 16px 0; border: 1px solid var(--line); border-radius: 15px; overflow: hidden; background: linear-gradient(145deg, #fff, #f9fbfa); box-shadow: 0 8px 28px rgba(25, 47, 37, .07); }
+    .chart-head { padding: 15px 17px 4px; }
+    .chart-title { display: block; color: #24352c; font-size: 14px; font-weight: 760; letter-spacing: -.01em; }
+    .chart-description { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .chart-stage { position: relative; min-height: 240px; width: 100%; padding: 8px 14px 14px; overflow-x: auto; }
+    .chart-stage .vega-embed, .chart-stage .vega-embed > div, .chart-stage svg, .chart-stage canvas { max-width: 100%; }
+    .chart-stage .vega-actions { padding: 7px 4px 0; text-align: right; }
+    .chart-stage .vega-actions a { margin-left: 12px; color: var(--brand); font-size: 11px; font-weight: 700; text-decoration: none; }
+    .chart-loading { min-height: 220px; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+    .chart-fallback-note { margin: 4px 0 10px; color: #795719; font-size: 11px; }
+    .bars { padding: 3px 0; }
     .bar-row { display: grid; grid-template-columns: minmax(90px, 1fr) 3fr auto; gap: 9px; align-items: center; margin: 8px 0; font-size: 12px; }
     .bar-track { height: 9px; border-radius: 99px; background: #e7ede9; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: inherit; background: var(--brand); }
@@ -70,6 +83,12 @@
     .response-meta { margin-top: 12px; color: var(--muted); font-size: 12px; }
     .execution-details { margin-top: 10px; border: 1px solid var(--line); border-radius: 11px; background: #f8faf9; overflow: hidden; }
     .execution-details summary { padding: 10px 12px; cursor: pointer; color: #405149; font-size: 12px; font-weight: 700; }
+    .technical-details { margin: 16px 0; border: 1px solid var(--line); border-radius: 12px; background: #f8faf9; overflow: hidden; }
+    .technical-details > summary { padding: 12px 14px; cursor: pointer; color: #405149; font-size: 12px; font-weight: 750; }
+    .technical-details > summary::marker { color: var(--brand); }
+    .technical-description { padding: 0 14px 9px; color: var(--muted); font-size: 11px; }
+    .technical-content { padding: 0 12px 12px; }
+    .technical-content > :last-child { margin-bottom: 0; }
     .progress-list { display: grid; gap: 0; padding: 0 12px 10px; }
     .progress-step { position: relative; padding: 7px 8px 7px 25px; color: var(--muted); font-size: 12px; }
     .progress-step::before { content: ''; position: absolute; left: 5px; top: 13px; width: 8px; height: 8px; border-radius: 50%; background: #a8b4ad; }
@@ -237,7 +256,15 @@
         const tbody = document.createElement('tbody'); block.rows.forEach(row => { const line = document.createElement('tr'); block.columns.forEach(column => line.append(element('td', '', formatValue(row[column])))); tbody.append(line); });
         table.append(tbody); scroll.append(table); card.append(head, scroll); return card;
       }
-      if (block.type === 'chart') return renderChart(block.specification);
+      if (block.type === 'details') {
+        const details = element('details', 'technical-details'); details.open = Boolean(block.expanded);
+        details.append(element('summary', '', block.title || 'Technical details'));
+        if (block.description) details.append(element('div', 'technical-description', block.description));
+        const content = element('div', 'technical-content');
+        (block.content || []).forEach(item => content.append(renderBlock(item)));
+        details.append(content); return details;
+      }
+      if (block.type === 'chart') return renderChart(block);
       return element('div', 'notice warning', `Unsupported content block: ${block.type}`);
     }
     function renderExecutionMetadata(metadata) {
@@ -281,11 +308,48 @@
       const csv = [block.columns.map(quote).join(','), ...block.rows.map(row => block.columns.map(column => quote(row[column])).join(','))].join('\n');
       const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'})); link.download = 'talk-to-data.csv'; link.click(); URL.revokeObjectURL(link.href);
     }
-    function renderChart(spec) {
-      const chart = element('div', 'bars'), values = spec?.data?.values || [], x = spec?.encoding?.x?.field, y = spec?.encoding?.y?.field;
-      const max = Math.max(...values.map(item => Number(item[y]) || 0), 1);
-      values.slice(0, 20).forEach(item => { const row = element('div', 'bar-row'); row.append(element('span', '', formatValue(item[x]))); const track = element('div', 'bar-track'), fill = element('div', 'bar-fill'); fill.style.width = `${Math.max(1, ((Number(item[y]) || 0) / max) * 100)}%`; track.append(fill); row.append(track, element('strong', '', formatValue(item[y]))); chart.append(row); });
-      return chart;
+    function renderChart(block) {
+      const card = element('section', 'chart-card'), head = element('div', 'chart-head');
+      head.append(element('span', 'chart-title', block.title || 'Visualization'));
+      if (block.description) head.append(element('span', 'chart-description', block.description));
+      const stage = element('div', 'chart-stage');
+      stage.append(element('div', 'chart-loading', 'Preparing interactive visualization…'));
+      card.append(head, stage);
+      renderInteractiveChart(stage, block.specification);
+      return card;
+    }
+    async function renderInteractiveChart(stage, spec) {
+      for (let attempt = 0; attempt < 50 && typeof window.vegaEmbed !== 'function'; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (typeof window.vegaEmbed !== 'function') {
+        renderChartFallback(stage, spec, 'Interactive chart library could not be loaded.'); return;
+      }
+      try {
+        stage.replaceChildren();
+        const embedded = await window.vegaEmbed(stage, spec, {
+          mode: 'vega-lite', renderer: 'svg', tooltip: true,
+          actions: {export: {svg: true, png: true}, source: false, compiled: false, editor: false}
+        });
+        if ('ResizeObserver' in window) {
+          const observer = new ResizeObserver(() => embedded.view.resize().runAsync().catch(() => {}));
+          observer.observe(stage);
+        }
+      } catch (error) {
+        renderChartFallback(stage, spec, `Interactive rendering failed: ${error?.message || 'invalid chart'}`);
+      }
+    }
+    function renderChartFallback(stage, spec, reason) {
+      stage.replaceChildren(element('div', 'chart-fallback-note', reason));
+      const values = spec?.data?.values || [], encoding = spec?.encoding || {};
+      const category = encoding?.y?.type === 'nominal' ? encoding.y.field : encoding?.x?.field;
+      const measure = encoding?.x?.type === 'quantitative' ? encoding.x.field : encoding?.y?.field;
+      if (!category || !measure || !values.length) {
+        stage.append(element('div', 'notice warning', 'An accessible visualization is unavailable for this result.')); return;
+      }
+      const chart = element('div', 'bars'), max = Math.max(...values.map(item => Math.abs(Number(item[measure]) || 0)), 1);
+      values.slice(0, 20).forEach(item => { const row = element('div', 'bar-row'); row.append(element('span', '', formatValue(item[category]))); const track = element('div', 'bar-track'), fill = element('div', 'bar-fill'); fill.style.width = `${Math.max(1, (Math.abs(Number(item[measure]) || 0) / max) * 100)}%`; track.append(fill); row.append(track, element('strong', '', formatValue(item[measure]))); chart.append(row); });
+      stage.append(chart);
     }
 
     async function loadSuggestions() {
@@ -355,7 +419,7 @@
     }
     async function handleEvent(event) {
       if (event.message_id && event.message_id !== state.pendingAssistantId) return false;
-      const labels = { 'agent.status.changed': event.data?.status?.replaceAll('_', ' '), 'clarification.required': 'Needs clarification', 'workflow.blocked': 'Unable to continue', 'query.generated': 'Validating SQL', 'query.execution.started': 'Running query', 'query.execution.completed': 'Preparing results' };
+      const labels = { 'clarification.required': 'Needs clarification', 'workflow.blocked': 'Unable to continue' };
       if (event.type === 'workflow.progress') {
         updateProgress(event.data);
         setBusy(true, event.data?.label || 'Working');

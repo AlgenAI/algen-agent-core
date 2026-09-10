@@ -32,6 +32,7 @@ from traccia_runtime.context.builder import (
     DefaultContextBuilder,
     RetrievalContextBuilder,
 )
+from traccia_runtime.conversations import ConversationPresentation, PresentationAudience
 from traccia_runtime.conversations.service import (
     ConversationHandlerRegistry,
     ConversationService,
@@ -327,7 +328,7 @@ def build_container(settings: AppSettings) -> Container:
     audits: AuditLog = (
         PostgresAuditLog(database) if storage.audit_store == "postgres" else InMemoryAuditLog()
     )
-    policies = CompositePolicyEngine()
+    policies = CompositePolicyEngine(guardrail_scope=observability.guardrail_scope)
     planners = PlannerRegistry()
     contexts = ContextBuilderRegistry(DefaultContextBuilder(memory))
     verifiers = VerificationService()
@@ -514,8 +515,16 @@ def build_container(settings: AppSettings) -> Container:
         if storage.conversation_store == "postgres"
         else InMemoryConversationEventBus()
     )
+    presentation = ConversationPresentation(
+        progress_audience=PresentationAudience(
+            settings.conversation_presentation.progress_audience
+        ),
+        error_audience=PresentationAudience(settings.conversation_presentation.error_audience),
+        show_technical_details=settings.conversation_presentation.show_technical_details,
+        technical_details_expanded=(settings.conversation_presentation.technical_details_expanded),
+    )
     conversation_handlers = ConversationHandlerRegistry()
-    conversation_handlers.register(RuntimeConversationHandler(runtime))
+    conversation_handlers.register(RuntimeConversationHandler(runtime, presentation))
     conversations = ConversationService(
         conversation_store,
         conversation_events,
@@ -524,6 +533,7 @@ def build_container(settings: AppSettings) -> Container:
         observability=observability,
         telemetry_include_content=settings.telemetry.include_conversation_content,
         telemetry_max_content_chars=settings.telemetry.max_content_chars,
+        presentation=presentation,
     )
     return Container(
         runtime=runtime,

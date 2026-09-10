@@ -69,6 +69,14 @@ def test_telemetry_content_capture_is_bounded_and_disabled_by_default() -> None:
         )
 
 
+def test_conversation_presentation_defaults_to_business_safe_output() -> None:
+    settings = AppSettings()
+    assert settings.conversation_presentation.progress_audience == "business"
+    assert settings.conversation_presentation.error_audience == "business"
+    assert settings.conversation_presentation.show_technical_details is False
+    assert settings.conversation_presentation.technical_details_expanded is False
+
+
 def test_unknown_request_override_is_rejected() -> None:
     with pytest.raises(ValidationError):
         RunRequest(

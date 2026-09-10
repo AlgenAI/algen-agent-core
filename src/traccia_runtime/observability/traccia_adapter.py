@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import os
 from collections.abc import Mapping
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from types import ModuleType
 from typing import Any, Protocol, cast
 
+from opentelemetry import context as otel_context
 from opentelemetry import trace
+from opentelemetry.context import Context
 from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.trace import Status, StatusCode
 
 from traccia_runtime.config.settings import TelemetrySettings, TracciaSettings
 from traccia_runtime.exceptions.errors import ConfigurationError
@@ -22,6 +26,29 @@ class ObservabilityAdapter(Protocol):
     ) -> AbstractContextManager[Any]: ...
 
     def span_attributes(self) -> Mapping[str, str]: ...
+
+    def span_scope(
+        self,
+        name: str,
+        *,
+        attributes: Mapping[str, Any],
+        root: bool = False,
+    ) -> AbstractContextManager[Any] | None: ...
+
+    def set_span_outcome(
+        self, span: Any, *, failed: bool, description: str | None = None
+    ) -> None: ...
+
+    def guardrail_scope(
+        self,
+        *,
+        name: str,
+        category: str,
+        enforcement_mode: str,
+        policy_id: str | None = None,
+    ) -> AbstractContextManager[Any]: ...
+
+    def govern(self, invocation: Any, *, agent_id: str, agent_name: str) -> Any: ...
 
     def stop(self) -> None: ...
 
@@ -38,6 +65,52 @@ class NoopObservabilityAdapter:
 
     def span_attributes(self) -> Mapping[str, str]:
         return {}
+
+    def span_scope(
+        self,
+        name: str,
+        *,
+        attributes: Mapping[str, Any],
+        root: bool = False,
+    ) -> AbstractContextManager[Any] | None:
+        del name, attributes, root
+        return None
+
+    def set_span_outcome(
+        self, span: Any, *, failed: bool, description: str | None = None
+    ) -> None:
+        span.set_status(
+            Status(
+                StatusCode.ERROR if failed else StatusCode.OK,
+                description if failed else None,
+            )
+        )
+
+    def guardrail_scope(
+        self,
+        *,
+        name: str,
+        category: str,
+        enforcement_mode: str,
+        policy_id: str | None = None,
+    ) -> AbstractContextManager[Any]:
+        attributes: dict[str, Any] = {
+            "span.type": "guardrail",
+            "guardrail.name": name,
+            "guardrail.category": category,
+            "guardrail.enforcement_mode": enforcement_mode,
+            "guardrail.source_sdk": "traccia_runtime",
+            "guardrail.evidence_type": "span_attribute",
+        }
+        if policy_id:
+            attributes["guardrail.policy_id"] = policy_id
+        return trace.get_tracer("traccia_runtime.guardrails").start_as_current_span(
+            f"guardrail.{name}", attributes=attributes
+        )
+
+    def govern(self, invocation: Any, *, agent_id: str, agent_name: str) -> Any:
+        del agent_id, agent_name
+        return invocation
 
     def stop(self) -> None:
         return None
@@ -131,6 +204,88 @@ class TracciaObservabilityAdapter:
             "env": self._settings.environment,
             "environment": self._settings.environment,
         }
+
+    def span_scope(
+        self,
+        name: str,
+        *,
+        attributes: Mapping[str, Any],
+        root: bool = False,
+    ) -> AbstractContextManager[Any] | None:
+        """Create a Traccia-managed span so enrichment processors see its end.
+
+        Raw OpenTelemetry children still inherit this span. A managed root is
+        required for Traccia's guardrail detector to attach the trace-level
+        ``guardrail.summary`` consumed by Guardrail Posture.
+        """
+        self.start()
+        module = self._module
+        assert module is not None
+
+        @contextmanager
+        def scope() -> Any:
+            token = otel_context.attach(Context()) if root else None
+            try:
+                with module.span(name, attributes=dict(attributes)) as span:
+                    yield span
+            finally:
+                if token is not None:
+                    otel_context.detach(token)
+
+        return scope()
+
+    def set_span_outcome(
+        self, span: Any, *, failed: bool, description: str | None = None
+    ) -> None:
+        status_type = type(span.status)
+        status = status_type.ERROR if failed else status_type.OK
+        span.set_status(status, description if failed else None)
+
+    def guardrail_scope(
+        self,
+        *,
+        name: str,
+        category: str,
+        enforcement_mode: str,
+        policy_id: str | None = None,
+    ) -> AbstractContextManager[Any]:
+        """Create an explicit Tier-A guardrail span through the Traccia SDK.
+
+        The SDK's guardrail processor detects these child spans and writes the
+        aggregate ``guardrail.summary`` onto the root conversation trace.
+        """
+        self.start()
+        guardrails = importlib.import_module("traccia.guardrails")
+        return cast(
+            AbstractContextManager[Any],
+            guardrails.guardrail_span(
+                name,
+                category=category,
+                enforcement_mode=enforcement_mode,
+                policy_id=policy_id,
+            ),
+        )
+
+    def govern(self, invocation: Any, *, agent_id: str, agent_name: str) -> Any:
+        if not self._settings.governance_enabled:
+            return invocation
+        governed: Any | None = None
+
+        async def async_invocation(*args: Any, **kwargs: Any) -> Any:
+            nonlocal governed
+            self.start()
+            assert self._module is not None
+            if governed is None:
+                governed = self._module.govern(
+                    agent_id=self._settings.governance_agent_id or agent_id,
+                    fail_open=self._settings.governance_fail_open,
+                    name=f"{agent_name}.governed_run",
+                    attributes={"agent.name": agent_name},
+                )(invocation)
+            result = governed(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+
+        return async_invocation
 
     def stop(self) -> None:
         if not self._started or self._module is None:

@@ -192,7 +192,13 @@ class MemoryPolicy(StrictModel):
 
 
 class GuardrailPolicy(StrictModel):
-    policies: tuple[str, ...] = ("secrets", "budget", "authorization")
+    policies: tuple[str, ...] = (
+        "secrets",
+        "pii",
+        "prompt_injection",
+        "output_validation",
+        "authorization",
+    )
     require_citations: bool = False
 
 
@@ -236,7 +242,13 @@ class AgentDefinition(StrictModel):
     model_allowlist: frozenset[str] = frozenset()
 
     @property
+    def logical_id(self) -> str:
+        """Stable telemetry and policy identity, independent of definition version."""
+        return self.name
+
+    @property
     def key(self) -> str:
+        """Versioned definition key used for loading and reproducibility."""
         return f"{self.name}@{self.version}"
 
 
@@ -261,9 +273,7 @@ class RunStatus(StrEnum):
 TERMINAL_STATUSES = frozenset(
     {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED, RunStatus.TIMED_OUT}
 )
-PAUSED_STATUSES = frozenset(
-    {RunStatus.AWAITING_CLARIFICATION, RunStatus.AWAITING_APPROVAL}
-)
+PAUSED_STATUSES = frozenset({RunStatus.AWAITING_CLARIFICATION, RunStatus.AWAITING_APPROVAL})
 
 
 class RunRequest(StrictModel):

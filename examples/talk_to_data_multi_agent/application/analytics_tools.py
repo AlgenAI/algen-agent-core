@@ -198,16 +198,18 @@ def static_fare_scenario(rows: Rows, parameters: dict[str, Any]) -> AnalysisOutc
     values = _numbers(rows, column)
     if not values:
         return _missing(AnalysisKind.STATIC_SCENARIO, column)
-    baseline = sum(values)
-    projected = baseline * (1 + percent / 100)
+    baseline = round(sum(values), 2)
+    projected = round(baseline * (1 + percent / 100), 2)
+    delta = round(projected - baseline, 2)
     return AnalysisOutcome(
         kind=AnalysisKind.STATIC_SCENARIO,
         status=AnalysisStatus.COMPLETED,
         summary=(
-            f"A {percent:+.2f}% arithmetic fare change moves revenue from "
-            f"{baseline:,.2f} to {projected:,.2f} if demand does not change."
+            f"A {percent:+.2f}% arithmetic fare change changes revenue by "
+            f"{delta:+,.2f}, from {baseline:,.2f} to {projected:,.2f}, "
+            "if demand does not change."
         ),
-        values={"baseline": baseline, "scenario": projected, "delta": projected - baseline},
+        values={"baseline": baseline, "scenario": projected, "delta": delta},
         assumptions=(
             Assumption(
                 statement="Passenger volume, mix, cancellations, and competitor response remain unchanged."

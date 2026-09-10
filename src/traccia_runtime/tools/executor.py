@@ -6,10 +6,12 @@ import json
 from typing import Any
 
 import jsonschema
+from opentelemetry import trace
 
 from traccia_runtime.cache import CacheContext, CacheService
 from traccia_runtime.exceptions.errors import PolicyDeniedError, ToolExecutionError
 from traccia_runtime.persistence.tool_executions import InMemoryToolExecutionStore
+from traccia_runtime.policies.instrumentation import evaluate_policy_observed
 from traccia_runtime.tools.contracts import (
     Idempotency,
     SideEffect,
@@ -34,6 +36,29 @@ class ToolExecutor:
         self._executions = executions or InMemoryToolExecutionStore()
         self._cache = cache
         self._semaphores: dict[str, asyncio.Semaphore] = {}
+        self._tracer = trace.get_tracer("traccia_runtime.tools")
+
+    async def _evaluate_policy(
+        self,
+        point: str,
+        payload: Any,
+        definition: Any,
+        context: ToolContext,
+    ) -> Any:
+        return await evaluate_policy_observed(
+            tracer=self._tracer,
+            engine=self._policy_engine,
+            point=point,
+            payload=payload,
+            context={"tool": definition, "context": context},
+            attributes={
+                "run.id": context.run_id,
+                "step.id": context.step_id,
+                "tenant.id": context.tenant_id,
+                "user.id": context.user_id,
+                "tool.name": definition.name,
+            },
+        )
 
     async def execute(
         self, name: str, arguments: dict[str, Any], context: ToolContext
@@ -47,9 +72,7 @@ class ToolExecutor:
             jsonschema.validate(arguments, definition.input_schema)
         except jsonschema.ValidationError as exc:
             raise ToolExecutionError(f"invalid input for {name}: {exc.message}") from exc
-        decision = await self._policy_engine.evaluate(
-            "before_tool", arguments, {"tool": definition, "context": context}
-        )
+        decision = await self._evaluate_policy("before_tool", arguments, definition, context)
         if decision.action != "allow":
             raise PolicyDeniedError(decision.reason)
         execution, reserved = await self._executions.begin(context, name)
@@ -131,8 +154,8 @@ class ToolExecutor:
                     jsonschema.validate(result, definition.output_schema)
                 except jsonschema.ValidationError as exc:
                     raise ToolExecutionError(f"invalid output from {name}: {exc.message}") from exc
-                output_decision = await self._policy_engine.evaluate(
-                    "after_tool", result, {"tool": definition, "context": context}
+                output_decision = await self._evaluate_policy(
+                    "after_tool", result, definition, context
                 )
                 if output_decision.action not in {"allow", "redact", "transform"}:
                     raise PolicyDeniedError(output_decision.reason)

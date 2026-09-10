@@ -60,7 +60,9 @@ class ReadOnlyPostgresExecutor:
         self._cache = cache
         self._data_version = data_version
         self._governance = governance
-        self._certified_sources = certified_sources
+        self._certified_sources = frozenset(
+            alias for source in certified_sources for alias in _source_aliases(source)
+        )
         self._authorization_tags = authorization_tags
         self._purpose = purpose
         self._pool: Any = None
@@ -103,16 +105,16 @@ class ReadOnlyPostgresExecutor:
         if self._governance is not None:
             normalized_sql = validated.replace('"', "").lower()
             source_ids = tuple(
-                sorted(
-                    table
-                    for table in self._allowed_tables
-                    if table.lower() in normalized_sql
-                )
+                sorted(table for table in self._allowed_tables if table.lower() in normalized_sql)
             )
             self._governance.enforce(
                 GovernedQueryRequest(
-                    tenant_id=cache_context.tenant_id if cache_context and cache_context.tenant_id else "unknown",
-                    user_id=cache_context.user_id if cache_context and cache_context.user_id else "unknown",
+                    tenant_id=cache_context.tenant_id
+                    if cache_context and cache_context.tenant_id
+                    else "unknown",
+                    user_id=cache_context.user_id
+                    if cache_context and cache_context.user_id
+                    else "unknown",
                     purpose=self._purpose,
                     source_ids=source_ids,
                     authorization_tags=self._authorization_tags,
@@ -121,7 +123,7 @@ class ReadOnlyPostgresExecutor:
                             source_id=source,
                             completeness=1.0,
                             minimum_completeness=1.0,
-                            certified=source in self._certified_sources,
+                            certified=bool(_source_aliases(source) & self._certified_sources),
                         )
                         for source in source_ids
                     ),
@@ -207,18 +209,15 @@ def _json_value(value: Any) -> Any:
     return value
 
 
-def chart_for(result: QueryResult) -> dict[str, Any] | None:
-    if len(result.columns) < 2 or not result.rows:
-        return None
-    category, measure = result.columns[:2]
-    if not all(isinstance(row.get(measure), (int, float)) for row in result.rows):
-        return None
-    return {
-        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-        "mark": {"type": "bar", "tooltip": True},
-        "data": {"values": list(result.rows)},
-        "encoding": {
-            "x": {"field": category, "type": "nominal", "sort": "-y"},
-            "y": {"field": measure, "type": "quantitative"},
-        },
-    }
+def _source_aliases(source: str) -> frozenset[str]:
+    """Return comparable qualified and catalog source identities.
+
+    The Markdown schema catalog intentionally stores unqualified table names while semantic
+    models use schema-qualified PostgreSQL names. Governance must compare those two trusted
+    registries canonically rather than treating qualification as a certification difference.
+    """
+    canonical = source.replace('"', "").strip().lower()
+    if not canonical:
+        return frozenset()
+    return frozenset((canonical, canonical.rsplit(".", 1)[-1]))
+

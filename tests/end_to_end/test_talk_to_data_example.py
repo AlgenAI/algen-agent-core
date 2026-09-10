@@ -21,7 +21,10 @@ from examples.talk_to_data_multi_agent.application.analytics_workflow import (
     AnalyticsWorkflow,
 )
 from examples.talk_to_data_multi_agent.application.catalog import load_schema_catalog
-from examples.talk_to_data_multi_agent.application.query_executor import QueryResult
+from examples.talk_to_data_multi_agent.application.query_executor import (
+    QueryResult,
+    ReadOnlyPostgresExecutor,
+)
 from examples.talk_to_data_multi_agent.application.workflow import (
     IntentAssessment,
     SQLGeneration,
@@ -36,7 +39,12 @@ from examples.talk_to_data_multi_agent.dashboard import (
     build_dashboard_app,
 )
 from traccia_runtime.config.settings import load_settings
-from traccia_runtime.conversations import Conversation, ConversationMessage
+from traccia_runtime.conversations import (
+    Conversation,
+    ConversationMessage,
+    ConversationPresentation,
+)
+from traccia_runtime.governance import QueryGovernanceEngine, QueryGovernancePolicy
 from traccia_runtime.semantics import SemanticLayer
 from traccia_runtime.types.contracts import Role
 
@@ -179,9 +187,7 @@ def test_agent_configuration_has_distinct_intent_and_sql_roles(
     assert agents["talk-to-data-sql"].default_model.provider == "openai"
     assert agents["talk-to-data-planner"].budget.max_tokens == 24_000
     assert agents["talk-to-data-planner"].budget.max_output_tokens == 8_000
-    assert agents["talk-to-data-planner"].default_model.extensions == {
-        "reasoning_effort": "low"
-    }
+    assert agents["talk-to-data-planner"].default_model.extensions == {"reasoning_effort": "low"}
     assert settings.storage.run_store == "postgres"
     assert settings.storage.event_store == "postgres"
     assert settings.storage.audit_store == "postgres"
@@ -193,6 +199,11 @@ def test_agent_configuration_has_distinct_intent_and_sql_roles(
     assert settings.runtime.recover_incomplete_runs is True
     assert settings.feature_flags["talk_to_data_show_response_time"] is True
     assert settings.feature_flags["talk_to_data_show_progress"] is True
+    assert settings.feature_flags["talk_to_data_show_charts"] is True
+    assert settings.conversation_presentation.progress_audience == "business"
+    assert settings.conversation_presentation.error_audience == "business"
+    assert settings.conversation_presentation.show_technical_details is False
+    assert settings.conversation_presentation.technical_details_expanded is False
 
 
 async def test_dashboard_html_is_served_by_example_api(
@@ -205,11 +216,16 @@ async def test_dashboard_html_is_served_by_example_api(
         diagram = await client.get("/architecture/agents")
         high_level_v2 = await client.get("/architecture/v2/high-level")
         detailed_v2 = await client.get("/architecture/v2/detailed")
+        detailed_new_v2 = await client.get("/architecture/v2/detailed-new")
         animated_v2 = await client.get("/architecture/v2/animated")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert response.headers["cache-control"] == "no-store"
     assert "Talk to Data · Traccia" in response.text
+    assert "vega-lite@6" in response.text
+    assert "window.vegaEmbed" in response.text
+    assert "block.type === 'details'" in response.text
+    assert "technical-details" in response.text
     assert "workflow.progress" in response.text
     assert "Response time:" in response.text
     assert "How this response was prepared" in response.text
@@ -219,11 +235,15 @@ async def test_dashboard_html_is_served_by_example_api(
     assert "Executive airline" in high_level_v2.text
     assert detailed_v2.status_code == 200
     assert "Governed conversational airline analytics" in detailed_v2.text
+    assert detailed_new_v2.status_code == 200
+    assert "From executive question" in detailed_new_v2.text
+    assert "Customer data and model plane" in detailed_new_v2.text
     assert animated_v2.status_code == 200
     assert "Follow a question through the system" in animated_v2.text
     assert "Which agencies are materially gaining or losing market share" in animated_v2.text
     assert (ARCHITECTURE_V2_DIR / "high_level.html").is_file()
     assert (ARCHITECTURE_V2_DIR / "detailed.html").is_file()
+    assert (ARCHITECTURE_V2_DIR / "detailed_new.html").is_file()
     assert (ARCHITECTURE_V2_DIR / "detailed_animated.html").is_file()
 
 
@@ -231,6 +251,8 @@ async def test_dashboard_html_is_served_by_example_api(
 def test_structured_output_schemas_require_every_property(model: Any) -> None:
     schema = model.model_json_schema()
     assert set(schema["properties"]) == set(schema["required"])
+
+
 async def test_workflow_skips_clarification_when_intent_is_adequate() -> None:
     client = FakeClient([intent(), sql_output()])
     asked: list[str] = []
@@ -276,9 +298,7 @@ async def test_workflow_reassesses_after_one_minimal_clarification() -> None:
 
 
 async def test_workflow_stops_after_bounded_clarifications() -> None:
-    client = FakeClient(
-        [intent("needs_clarification", "Which measure?")] * 2
-    )
+    client = FakeClient([intent("needs_clarification", "Which measure?")] * 2)
 
     async def clarify(question: str) -> str:
         return "I do not know"
@@ -378,7 +398,8 @@ async def test_dashboard_handler_resumes_clarification_as_next_message() -> None
     progress_events = [data for name, data in events if name == "workflow.progress"]
     assert progress_events
     assert all(event["safe_summary"] is True for event in progress_events)
-    assert any(block.type == "code" for block in completed.content)
+    assert not any(block.type in {"code", "table", "details"} for block in completed.content)
+    assert completed.metadata["execution_steps"][0]["label"] == "Understanding your question"
     assert completed.run_ids == ("run-2", "run-3", "run-4")
     assert runtime.requests[1].conversation_id == conversation.id
     assert runtime.requests[2].parent_run_id == "run-2"
@@ -404,9 +425,7 @@ async def test_advanced_workflow_runs_bounded_specialist_pipeline() -> None:
             "confidence": 0.8,
         }
     )
-    runtime = FakeClient(
-        [analytics_intent(), analytics_plan(), sql_output(), report, review]
-    )
+    runtime = FakeClient([analytics_intent(), analytics_plan(), sql_output(), report, review])
     result = await AnalyticsWorkflow(
         runtime,
         catalog(),
@@ -427,15 +446,11 @@ async def test_advanced_workflow_runs_bounded_specialist_pipeline() -> None:
         "talk-to-data-insight",
         "talk-to-data-verifier",
     ]
-    assert runtime.requests[0].metadata["retrieval_query"] == (
-        "List current competitor fares"
-    )
+    assert runtime.requests[0].metadata["retrieval_query"] == ("List current competitor fares")
     assert runtime.requests[2].metadata["retrieval_query"] == (
         "List current competitor fares\nList current fares by route"
     )
-    assert len(runtime.requests[0].metadata["retrieval_query"]) < len(
-        runtime.requests[0].input
-    )
+    assert len(runtime.requests[0].metadata["retrieval_query"]) < len(runtime.requests[0].input)
     assert len(result.run_ids) == 5
 
 
@@ -478,8 +493,7 @@ async def test_advanced_workflow_repairs_undefined_planner_dimension() -> None:
     assert "semantic dimension 'period' is not defined" in repair_input["validation_error"]
     assert "period" not in repair_input["allowed_dimension_names"]
     assert any(
-        event_type == "agent.status.changed"
-        and data.get("status") == "repairing_analysis_plan"
+        event_type == "agent.status.changed" and data.get("status") == "repairing_analysis_plan"
         for event_type, data in events
     )
 
@@ -504,7 +518,7 @@ async def test_advanced_workflow_repairs_incompatible_router_selection() -> None
         "analysis_kind": "static_scenario",
         "analysis_tool": "static_fare_scenario",
         "tool_parameters": [
-            {"name": "value_column", "value": "revenue"},
+            {"name": "value_column", "value": "ticket_revenue"},
             {"name": "percent_change", "value": 5},
         ],
         "queries": [
@@ -515,7 +529,7 @@ async def test_advanced_workflow_repairs_incompatible_router_selection() -> None
                 "dimensions": ["route"],
                 "time_range": None,
                 "filters": [],
-                "expected_columns": ["route", "revenue"],
+                "expected_columns": ["route", "ticket_revenue"],
             }
         ],
         "assumptions": ["Passenger volume remains constant"],
@@ -524,14 +538,15 @@ async def test_advanced_workflow_repairs_incompatible_router_selection() -> None
     }
     invalid_static_plan = json.loads(json.dumps(static_plan))
     invalid_static_plan["tool_parameters"] = [
-        {"name": "percent_change", "value": 5}
+        {"name": "value_column", "value": "average_fare"},
+        {"name": "percent_change", "value": 5},
     ]
     generation = sql_output(
-        "SELECT sector AS route, SUM(total_amount) AS revenue "
+        "SELECT sector AS route, SUM(total_amount) AS ticket_revenue "
         "FROM public.pnr_flight GROUP BY sector"
     )
     invalid_generation = sql_output(
-        "SELECT sector AS route, SUM(total_amount) AS ticket_revenue "
+        "SELECT sector AS route, SUM(total_amount) AS revenue "
         "FROM public.pnr_flight GROUP BY sector"
     )
     runtime = FakeClient(
@@ -569,23 +584,203 @@ async def test_advanced_workflow_repairs_incompatible_router_selection() -> None
     assert "ancillary_revenue" in repair_input["invalid_intent"]["metrics"]
     assert "cannot be grouped" in repair_input["validation_error"]
     plan_repair_input = json.loads(runtime.requests[3].input)
-    assert "value_column" in plan_repair_input["validation_error"]
-    assert "Field required" in plan_repair_input["validation_error"]
+    assert "value_column must be 'ticket_revenue'" in plan_repair_input["validation_error"]
+    assert "per-passenger" in plan_repair_input["validation_error"]
     sql_repair_input = json.loads(runtime.requests[5].input)
-    assert "missing ['revenue']" in sql_repair_input["validation_error"]
-    assert sql_repair_input["invalid_generation"]["sql"].endswith(
-        "GROUP BY sector"
-    )
+    assert "missing ['ticket_revenue']" in sql_repair_input["validation_error"]
+    assert sql_repair_input["invalid_generation"]["sql"].endswith("GROUP BY sector")
     assert any(
-        event_type == "agent.status.changed"
-        and data.get("status") == "repairing_analytics_intent"
+        event_type == "agent.status.changed" and data.get("status") == "repairing_analytics_intent"
         for event_type, data in events
     )
     assert any(
-        event_type == "agent.status.changed"
-        and data.get("status") == "repairing_analysis_plan"
+        event_type == "agent.status.changed" and data.get("status") == "repairing_analysis_plan"
         for event_type, data in events
     )
+
+
+async def test_static_fare_portfolio_impact_uses_revenue_and_skips_llm_narration() -> None:
+    static_intent = {
+        "status": "ready",
+        "analysis_kind": "static_scenario",
+        "interpreted_request": "Increase average fare by 5% with bookings constant",
+        "metrics": ["ticket_revenue", "average_fare", "bookings"],
+        "dimensions": [],
+        "time_horizon": None,
+        "scenario_parameters": [{"name": "percent_change", "value": 5}],
+        "clarification_question": None,
+        "assumptions": ["Bookings remain constant"],
+        "evidence_ids": ["S1"],
+    }
+    static_plan = {
+        "executable": True,
+        "analysis_kind": "static_scenario",
+        "analysis_tool": "static_fare_scenario",
+        "tool_parameters": [
+            {"name": "value_column", "value": "ticket_revenue"},
+            {"name": "percent_change", "value": 5},
+        ],
+        "queries": [
+            {
+                "id": "portfolio_baseline",
+                "purpose": "Calculate the portfolio baseline",
+                "metrics": ["ticket_revenue", "average_fare", "bookings"],
+                "dimensions": [],
+                "time_range": None,
+                "filters": [],
+                "expected_columns": ["ticket_revenue", "average_fare", "bookings"],
+            }
+        ],
+        "assumptions": ["Bookings remain constant"],
+        "blockers": [],
+        "required_data": [],
+    }
+    generation = sql_output(
+        "SELECT SUM(total_amount) AS ticket_revenue, "
+        "SUM(total_amount) / NULLIF(SUM(seat_count), 0) AS average_fare, "
+        "SUM(seat_count) AS bookings FROM public.pnr_flight"
+    )
+    runtime = FakeClient([json.dumps(static_intent), json.dumps(static_plan), generation])
+
+    class PortfolioExecutor:
+        async def execute(self, sql: str, parameters: tuple[Any, ...]) -> QueryResult:
+            del sql, parameters
+            return QueryResult(
+                columns=("ticket_revenue", "average_fare", "bookings"),
+                rows=(
+                    {
+                        "ticket_revenue": 102_615_813,
+                        "average_fare": 4_378.554915514593,
+                        "bookings": 23_436,
+                    },
+                ),
+                truncated=False,
+                execution_ms=1.0,
+            )
+
+    result = await AnalyticsWorkflow(
+        runtime,
+        catalog(),
+        SemanticLayer.from_yaml(SEMANTIC_LAYER_PATH),
+        default_airline_analytics_tools(),
+        tenant_id="tenant-a",
+        user_id="user-a",
+        executor=PortfolioExecutor(),
+    ).run_turn("What is the static revenue impact of increasing average fare by 5%?", [])
+
+    assert result.analysis is not None
+    assert result.analysis.values == {
+        "baseline": 102_615_813.0,
+        "scenario": 107_746_603.65,
+        "delta": 5_130_790.65,
+    }
+    assert "+5,130,790.65" in result.message
+    assert "102,615,813.00" in result.message
+    assert "107,746,603.65" in result.message
+    assert result.report is None
+    assert result.review is None
+    assert [request.agent for request in runtime.requests] == [
+        "talk-to-data-router",
+        "talk-to-data-planner",
+        "talk-to-data-sql",
+    ]
+
+
+async def test_dashboard_static_scenario_renders_chart_before_table_and_sql() -> None:
+    intent = {
+        "status": "ready",
+        "analysis_kind": "static_scenario",
+        "interpreted_request": "Increase average fare by 5% with bookings constant",
+        "metrics": ["ticket_revenue", "average_fare", "bookings"],
+        "dimensions": [],
+        "time_horizon": None,
+        "scenario_parameters": [{"name": "percent_change", "value": 5}],
+        "clarification_question": None,
+        "assumptions": ["Bookings remain constant"],
+        "evidence_ids": ["S1"],
+    }
+    plan = {
+        "executable": True,
+        "analysis_kind": "static_scenario",
+        "analysis_tool": "static_fare_scenario",
+        "tool_parameters": [
+            {"name": "value_column", "value": "ticket_revenue"},
+            {"name": "percent_change", "value": 5},
+        ],
+        "queries": [
+            {
+                "id": "portfolio_baseline",
+                "purpose": "Calculate portfolio baseline",
+                "metrics": ["ticket_revenue", "average_fare", "bookings"],
+                "dimensions": [],
+                "time_range": None,
+                "filters": [],
+                "expected_columns": ["ticket_revenue", "average_fare", "bookings"],
+            }
+        ],
+        "assumptions": ["Bookings remain constant"],
+        "blockers": [],
+        "required_data": [],
+    }
+    runtime = FakeClient(
+        [
+            json.dumps(intent),
+            json.dumps(plan),
+            sql_output(
+                "SELECT SUM(total_amount) AS ticket_revenue, "
+                "SUM(total_amount) / NULLIF(SUM(seat_count), 0) AS average_fare, "
+                "SUM(seat_count) AS bookings FROM public.pnr_flight"
+            ),
+        ]
+    )
+
+    class PortfolioExecutor:
+        async def execute(self, sql: str, parameters: tuple[Any, ...]) -> QueryResult:
+            del sql, parameters
+            return QueryResult(
+                columns=("ticket_revenue", "average_fare", "bookings"),
+                rows=({"ticket_revenue": 100.0, "average_fare": 10.0, "bookings": 10},),
+                truncated=False,
+                execution_ms=1.0,
+            )
+
+    handler = TalkToDataConversationHandler(
+        SimpleNamespace(runtime=runtime),
+        catalog(),
+        SemanticLayer.from_yaml(SEMANTIC_LAYER_PATH),
+        default_airline_analytics_tools(),
+        executor=PortfolioExecutor(),  # type: ignore[arg-type]
+        show_charts=True,
+        presentation=ConversationPresentation(show_technical_details=True),
+    )
+    conversation = Conversation(
+        tenant_id="tenant-a",
+        user_id="user-a",
+        agent="talk-to-data-router",
+        handler="talk-to-data",
+    )
+    message = ConversationMessage.text(
+        conversation_id=conversation.id,
+        tenant_id="tenant-a",
+        role=Role.USER,
+        text="What is the static revenue impact of increasing average fare by 5%?",
+    )
+
+    async def emit(_event: str, _data: dict[str, Any] | None = None) -> None:
+        return None
+
+    response = await handler.handle(conversation, message, (message,), emit)
+
+    assert [block.type for block in response.content] == [
+        "text",
+        "chart",
+        "notice",
+        "details",
+    ]
+    details = response.content[-1]
+    assert details.type == "details"
+    assert details.expanded is False
+    assert [block.type for block in details.content] == ["code", "table"]
 
 
 async def test_advanced_workflow_does_not_narrate_insufficient_analysis() -> None:
@@ -599,9 +794,7 @@ async def test_advanced_workflow_does_not_narrate_insufficient_analysis() -> Non
             "tool_parameters": [{"name": "value_column", "value": "price"}],
         }
     )
-    runtime = FakeClient(
-        [json.dumps(anomaly_intent), json.dumps(anomaly_plan), sql_output()]
-    )
+    runtime = FakeClient([json.dumps(anomaly_intent), json.dumps(anomaly_plan), sql_output()])
 
     result = await AnalyticsWorkflow(
         runtime,
@@ -696,11 +889,121 @@ async def test_flight_inventory_ranking_repairs_unbounded_sql() -> None:
     ).run_turn("Which flights have the lowest remaining inventory?", [])
 
     assert result.status.value == "completed"
-    assert result.queries[0].generation.sql.endswith(
-        "ORDER BY remaining_inventory ASC LIMIT 10;"
-    )
+    assert result.queries[0].generation.sql.endswith("ORDER BY remaining_inventory ASC LIMIT 10;")
     repair_input = json.loads(runtime.requests[3].input)
     assert "ORDER BY" in repair_input["validation_error"]
+    assert "LIMIT 10" in repair_input["repair_instruction"]
+
+
+async def test_flight_inventory_ranking_normalizes_oversized_model_limit() -> None:
+    inventory_intent = {
+        "status": "ready",
+        "analysis_kind": "descriptive",
+        "interpreted_request": "Rank current flights by lowest remaining inventory",
+        "metrics": ["current_inventory_remaining"],
+        "dimensions": [
+            "current_inventory_date",
+            "current_inventory_route",
+            "current_inventory_flight",
+        ],
+        "time_horizon": None,
+        "scenario_parameters": [],
+        "clarification_question": None,
+        "assumptions": ["Use current inventory state"],
+        "evidence_ids": ["S1"],
+    }
+    inventory_plan = {
+        "executable": True,
+        "analysis_kind": "descriptive",
+        "analysis_tool": "none",
+        "tool_parameters": [],
+        "queries": [
+            {
+                "id": "lowest_inventory_flights",
+                "purpose": "Rank flight instances by lowest remaining inventory",
+                "metrics": ["current_inventory_remaining"],
+                "dimensions": [
+                    "current_inventory_date",
+                    "current_inventory_route",
+                    "current_inventory_flight",
+                ],
+                "time_range": None,
+                "filters": [],
+                "expected_columns": [
+                    "flight_date",
+                    "route",
+                    "flight",
+                    "remaining_inventory",
+                ],
+            }
+        ],
+        "assumptions": [],
+        "blockers": [],
+        "required_data": [],
+    }
+    projection = (
+        "SELECT flight_date AS flight_date, sector AS route, flight_no AS flight, "
+        "SUM(authorized_units - sold_seats) FILTER (WHERE authorized_units IS NOT NULL "
+        "AND sold_seats IS NOT NULL) AS remaining_inventory "
+        "FROM public.pp_rbd_inventory_daily "
+        "GROUP BY flight_date, sector, flight_no "
+        "ORDER BY remaining_inventory ASC LIMIT 500"
+    )
+    runtime = FakeClient(
+        [json.dumps(inventory_intent), json.dumps(inventory_plan), sql_output(projection)]
+    )
+
+    result = await AnalyticsWorkflow(
+        runtime,
+        catalog(),
+        SemanticLayer.from_yaml(SEMANTIC_LAYER_PATH),
+        default_airline_analytics_tools(),
+        tenant_id="tenant-a",
+        user_id="user-a",
+    ).run_turn("Which flights have the lowest remaining inventory?", [])
+
+    assert result.status.value == "completed"
+    assert result.queries[0].generation.sql.endswith("ORDER BY remaining_inventory ASC LIMIT 10;")
+    assert [request.agent for request in runtime.requests] == [
+        "talk-to-data-router",
+        "talk-to-data-planner",
+        "talk-to-data-sql",
+    ]
+
+
+async def test_query_governance_matches_qualified_semantic_source_to_catalog_table() -> None:
+    executor = ReadOnlyPostgresExecutor(
+        "postgresql://unused",
+        frozenset({"pp_rbd_inventory_daily"}),
+        governance=QueryGovernanceEngine(
+            QueryGovernancePolicy(
+                allowed_purposes=("executive_analytics",),
+                require_certified_sources=True,
+                maximum_rows=500,
+                maximum_bytes_scanned=2_000_000,
+                maximum_compute_seconds=15,
+            )
+        ),
+        certified_sources=frozenset({"public.pp_rbd_inventory_daily"}),
+        authorization_tags=("talk_to_data.read",),
+    )
+
+    async def execute_database(_sql: str, _values: list[Any]) -> QueryResult:
+        return QueryResult(
+            columns=("remaining_inventory",),
+            rows=({"remaining_inventory": 4},),
+            truncated=False,
+            execution_ms=1.0,
+        )
+
+    executor._execute_database = execute_database  # type: ignore[method-assign]
+    result = await executor.execute(
+        "SELECT SUM(authorized_units - sold_seats) AS remaining_inventory "
+        "FROM public.pp_rbd_inventory_daily",
+        (),
+    )
+
+    assert result.rows == ({"remaining_inventory": 4},)
 
 
 @pytest.mark.parametrize(

@@ -2,7 +2,13 @@ import httpx
 
 from traccia_runtime.models.providers.adapters import AnthropicProvider, OpenAIProvider
 from traccia_runtime.models.providers.openai_compatible import OpenAICompatibleProvider
-from traccia_runtime.types.contracts import Message, ModelCapabilities, ModelRequest, Role
+from traccia_runtime.types.contracts import (
+    Message,
+    ModelCapabilities,
+    ModelRequest,
+    Role,
+    ToolSpec,
+)
 
 
 async def test_openai_compatible_normalizes_wire_response() -> None:
@@ -22,6 +28,64 @@ async def test_openai_compatible_normalizes_wire_response() -> None:
     assert response.provider == "custom"
     assert response.message.text_content == "ok"
     assert response.usage.total_tokens == 4
+
+
+async def test_openai_maps_namespaced_tool_names_at_provider_boundary() -> None:
+    observed_name = ""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal observed_name
+        body = __import__("json").loads(request.content)
+        observed_name = body["tools"][0]["function"]["name"]
+        assert "." not in observed_name
+        assert len(observed_name) <= 64
+        return httpx.Response(
+            200,
+            json={
+                "id": "response-tools",
+                "model": "gpt-5-mini",
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": observed_name,
+                                        "arguments": '{"days":10}',
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+        )
+
+    provider = OpenAIProvider(
+        "env://OPENAI_API_KEY",
+        "gpt-5-mini",
+        secret_provider=StaticSecrets(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    response = await provider.generate(
+        ModelRequest(
+            messages=(Message.text(Role.USER, "make a plan"),),
+            tools=(
+                ToolSpec(
+                    name="teaching.build_study_plan",
+                    description="Build a study plan",
+                    input_schema={"type": "object"},
+                ),
+            ),
+        )
+    )
+
+    assert observed_name.startswith("teaching_build_study_plan_")
+    assert response.tool_calls[0].name == "teaching.build_study_plan"
 
 
 async def test_openai_uses_modern_completion_token_parameter() -> None:

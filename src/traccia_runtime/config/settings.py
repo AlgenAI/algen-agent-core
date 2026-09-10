@@ -165,11 +165,16 @@ class TracciaSettings(StrictSettings):
     redact_pii: bool = True
     max_spans_per_second: float | None = Field(default=None, gt=0)
     flush_timeout_seconds: float = Field(default=5.0, gt=0)
+    governance_enabled: bool = False
+    governance_fail_open: bool = False
+    governance_agent_id: str | None = None
 
     @model_validator(mode="after")
     def validate_api_key_reference(self) -> TracciaSettings:
         if self.api_key and not self.api_key.startswith("env://"):
             raise ValueError("Traccia api_key must be an env:// reference")
+        if self.governance_enabled and not self.enabled:
+            raise ValueError("Traccia governance requires Traccia telemetry to be enabled")
         return self
 
 
@@ -228,6 +233,13 @@ class RuntimeSettings(StrictSettings):
     shutdown_grace_seconds: float = Field(default=10.0, ge=0, le=300)
 
 
+class ConversationPresentationSettings(StrictSettings):
+    progress_audience: Literal["business", "developer"] = "business"
+    error_audience: Literal["business", "developer"] = "business"
+    show_technical_details: bool = False
+    technical_details_expanded: bool = False
+
+
 class AnalyticalExecutionSettings(StrictSettings):
     graph_store: Literal["memory", "postgres"] = "memory"
     maximum_concurrency: int = Field(default=8, ge=1, le=128)
@@ -278,6 +290,9 @@ class AppSettings(StrictSettings):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     api: ApiSettings = Field(default_factory=ApiSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    conversation_presentation: ConversationPresentationSettings = Field(
+        default_factory=ConversationPresentationSettings
+    )
     analytical_execution: AnalyticalExecutionSettings = Field(
         default_factory=AnalyticalExecutionSettings
     )

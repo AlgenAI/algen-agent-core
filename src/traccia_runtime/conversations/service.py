@@ -8,7 +8,6 @@ from typing import Any
 import structlog
 from opentelemetry import trace
 from opentelemetry.context import Context
-from opentelemetry.trace import Status, StatusCode
 
 from traccia_runtime.conversations.contracts import (
     Conversation,
@@ -21,11 +20,11 @@ from traccia_runtime.conversations.contracts import (
     ConversationTurnResult,
     MessageStatus,
 )
+from traccia_runtime.conversations.presentation import ConversationPresentation
 from traccia_runtime.events.contracts import AuditEvent
 from traccia_runtime.exceptions.errors import (
     ConflictError,
     NotFoundError,
-    TracciaRuntimeError,
 )
 from traccia_runtime.observability.traccia_adapter import (
     NoopObservabilityAdapter,
@@ -58,8 +57,13 @@ class ConversationHandlerRegistry:
 class RuntimeConversationHandler:
     name = "runtime"
 
-    def __init__(self, runtime: Runtime) -> None:
+    def __init__(
+        self,
+        runtime: Runtime,
+        presentation: ConversationPresentation | None = None,
+    ) -> None:
         self._runtime = runtime
+        self._presentation = presentation or ConversationPresentation()
 
     async def handle(
         self,
@@ -68,6 +72,29 @@ class RuntimeConversationHandler:
         history: Sequence[ConversationMessage],
         emit: Any,
     ) -> ConversationTurnResult:
+        await emit(
+            "workflow.progress",
+            self._presentation.progress(
+                {
+                    "step": "respond",
+                    "label": "Preparing your answer",
+                    "description": "Reviewing your request and preparing a response.",
+                    "index": 1,
+                    "status": "started",
+                    "safe_summary": True,
+                },
+                {
+                    "step": "runtime_execution",
+                    "label": "Running the selected agent",
+                    "description": (
+                        f"Invoking runtime agent {conversation.agent!r} for this conversation turn."
+                    ),
+                    "index": 1,
+                    "status": "started",
+                    "safe_summary": True,
+                },
+            ),
+        )
         await emit("agent.status.changed", {"status": "running", "agent": conversation.agent})
         result = await self._runtime.run(
             RunRequest(
@@ -101,6 +128,7 @@ class ConversationService:
         observability: ObservabilityAdapter | None = None,
         telemetry_include_content: bool = False,
         telemetry_max_content_chars: int = 16_384,
+        presentation: ConversationPresentation | None = None,
     ) -> None:
         self.store = store
         self.events = events
@@ -109,6 +137,7 @@ class ConversationService:
         self._observability = observability or NoopObservabilityAdapter()
         self._telemetry_include_content = telemetry_include_content
         self._telemetry_max_content_chars = telemetry_max_content_chars
+        self.presentation = presentation or ConversationPresentation()
         self._tracer = trace.get_tracer("traccia_runtime.conversations")
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
@@ -326,11 +355,12 @@ class ConversationService:
             agent_name=conversation.agent,
             tenant_id=conversation.tenant_id,
         ):
-            with self._tracer.start_as_current_span(
-                "conversation.turn",
-                context=Context(),
-                attributes=attributes,
-            ) as span:
+            span_scope = self._observability.span_scope(
+                "conversation.turn", attributes=attributes, root=True
+            ) or self._tracer.start_as_current_span(
+                "conversation.turn", context=Context(), attributes=attributes
+            )
+            with span_scope as span:
                 try:
                     outcome, run_ids, block_count, output_text = await self._respond_observed(
                         conversation, user_message, assistant_message
@@ -338,7 +368,9 @@ class ConversationService:
                 except asyncio.CancelledError:
                     span.set_attribute("conversation.turn.status", "cancelled")
                     span.set_attribute("agent.run.outcome", "cancelled")
-                    span.set_status(Status(StatusCode.ERROR, "conversation turn cancelled"))
+                    self._observability.set_span_outcome(
+                        span, failed=True, description="conversation turn cancelled"
+                    )
                     raise
                 span.set_attribute("conversation.turn.status", outcome)
                 span.set_attribute("agent.run.outcome", outcome)
@@ -348,11 +380,10 @@ class ConversationService:
                     span.set_attribute("conversation.agent_run_ids", run_ids)
                 if self._telemetry_include_content and output_text:
                     span.set_attribute("conversation.output", self._telemetry_content(output_text))
-                span.set_status(
-                    Status(
-                        StatusCode.ERROR if outcome == "failed" else StatusCode.OK,
-                        "conversation turn failed" if outcome == "failed" else None,
-                    )
+                self._observability.set_span_outcome(
+                    span,
+                    failed=outcome == "failed",
+                    description="conversation turn failed" if outcome == "failed" else None,
                 )
 
     async def _respond_observed(
@@ -423,11 +454,7 @@ class ConversationService:
             await emit("assistant.message.cancelled", {})
             raise
         except Exception as exc:
-            public_message = (
-                str(exc)[:500]
-                if isinstance(exc, TracciaRuntimeError)
-                else "The request could not be completed."
-            )
+            public_message = self.presentation.unexpected_error_message(exc)
             structlog.get_logger("traccia_runtime.conversations").exception(
                 "conversation_response_failed",
                 conversation_id=conversation.id,

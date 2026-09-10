@@ -5,14 +5,19 @@ from collections.abc import Sequence
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from traccia_runtime.conversations import (
+    ChartBlock,
     CodeBlock,
     Conversation,
     ConversationHandlerRegistry,
     ConversationMessage,
+    ConversationPresentation,
     ConversationService,
     ConversationTurnResult,
+    DetailsBlock,
+    PresentationAudience,
     TableBlock,
 )
 from traccia_runtime.conversations.stores import (
@@ -21,6 +26,57 @@ from traccia_runtime.conversations.stores import (
 )
 from traccia_runtime.exceptions.errors import NotFoundError, TracciaRuntimeError
 from traccia_runtime.types.contracts import Role, TextBlock
+
+
+def test_chart_block_accepts_bounded_inline_vega_lite() -> None:
+    chart = ChartBlock(
+        title="Revenue by route",
+        description="Governed revenue comparison.",
+        specification={
+            "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+            "data": {"values": [{"route": "A-B", "revenue": 10}]},
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "route", "type": "nominal"},
+                "y": {"field": "revenue", "type": "quantitative"},
+            },
+        },
+    )
+
+    assert chart.grammar == "vega-lite"
+    assert chart.specification["data"]["values"][0]["revenue"] == 10
+
+
+@pytest.mark.parametrize(
+    "unsafe_fragment",
+    [
+        {"data": {"url": "https://attacker.example/data.json"}},
+        {"transform": [{"calculate": "datum.secret", "as": "leak"}]},
+        {"usermeta": {"embedOptions": {"editorUrl": "https://attacker.example"}}},
+    ],
+)
+def test_chart_block_rejects_external_or_expression_driven_specifications(
+    unsafe_fragment: dict[str, Any],
+) -> None:
+    with pytest.raises(ValidationError, match="not permitted"):
+        ChartBlock(
+            specification={
+                "mark": "bar",
+                "encoding": {},
+                **unsafe_fragment,
+            }
+        )
+
+
+def test_chart_block_rejects_excessive_inline_rows() -> None:
+    with pytest.raises(ValidationError, match="exceeds 1000 rows"):
+        ChartBlock(
+            specification={
+                "data": {"values": [{"value": index} for index in range(1_001)]},
+                "mark": "bar",
+                "encoding": {},
+            }
+        )
 
 
 class Handler:
@@ -106,7 +162,7 @@ async def test_recovery_does_not_replay_interrupted_handler_side_effects() -> No
     assert messages[-1].metadata["error_type"] == "InterruptedResponse"
 
 
-async def test_handler_runtime_errors_are_safe_but_actionable() -> None:
+async def test_handler_runtime_errors_are_business_safe_by_default() -> None:
     class FailingHandler:
         name = "failing"
 
@@ -129,7 +185,31 @@ async def test_handler_runtime_errors_are_safe_but_actionable() -> None:
             break
         await asyncio.sleep(0.001)
 
-    assert messages[-1].text_content == "Documented schema is insufficient for this query"
+    assert messages[-1].text_content == "I couldn't complete that request. Please try again."
+
+
+def test_developer_error_presentation_includes_actionable_detail() -> None:
+    presentation = ConversationPresentation(error_audience=PresentationAudience.DEVELOPER)
+
+    assert (
+        presentation.unexpected_error_message(
+            TracciaRuntimeError("Documented schema is insufficient for this query")
+        )
+        == "Documented schema is insufficient for this query"
+    )
+
+
+def test_details_block_groups_typed_technical_content_collapsed_by_default() -> None:
+    details = DetailsBlock(
+        title="Technical details",
+        content=(
+            CodeBlock(language="sql", code="SELECT 1"),
+            TableBlock(columns=("value",), rows=({"value": 1},)),
+        ),
+    )
+
+    assert details.expanded is False
+    assert [block.type for block in details.content] == ["code", "table"]
 
 
 async def test_handler_can_return_a_traced_failed_outcome_with_run_ids() -> None:

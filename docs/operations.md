@@ -26,6 +26,11 @@ runtime:
   recover_incomplete_runs: true
   recovery_limit: 1000
   shutdown_grace_seconds: 10
+conversation_presentation:
+  progress_audience: business
+  error_audience: business
+  show_technical_details: false
+  technical_details_expanded: false
 analytical_execution:
   graph_store: postgres
 query_governance:
@@ -57,6 +62,18 @@ The schema runner records applied files transactionally. FastAPI startup initial
 recovers non-paused incomplete runs. Completed tool calls return their persisted result; an
 interrupted side-effecting call becomes `indeterminate` and requires reconciliation rather than
 automatic replay. Approval and clarification waits remain paused across restarts.
+
+Conversation presentation is independent of telemetry. Use `business` for end-user deployments and
+`developer` for controlled diagnostic environments. `show_technical_details` governs typed SQL/raw
+table disclosures; supporting dashboards should render the Runtime `details` block collapsed when
+`technical_details_expanded` is false. These controls do not remove traces, audit events, or internal
+logs. Do not let untrusted end users override them without an authorization policy.
+
+Agent identity is stable across definition versions. Runtime spans and Traccia run identity use the
+unversioned agent name in `agent.id` and `gen_ai.agent.id`; `agent.version` and
+`gen_ai.agent.version` carry the selected version. `agent.definition.id` contains the versioned
+`name@version` key for reproducibility. Policies and long-lived dashboards should scope by
+`agent.id`, never by `agent.definition.id`.
 
 ## Scoped caching
 
@@ -140,13 +157,41 @@ telemetry:
     enable_costs: true
     enable_metrics: true
     redact_pii: true
+    governance_enabled: false
+    governance_fail_open: false
+    governance_agent_id: my-platform-agent-id
     max_spans_per_second: 100
     flush_timeout_seconds: 5
 ```
 
 Set `TRACCIA_API_KEY` through the deployment secret manager. Alternatively, omit `api_key` here and let the Traccia SDK load `TRACCIA_API_KEY` or `traccia.toml`. Never put a literal key in YAML.
 
-Traccia Runtime initializes Traccia once with `service_role: orchestrator` and `auto_start_trace: false`, scopes each run with its versioned agent identity, and stops and flushes the SDK during FastAPI shutdown. One `agent.run` root span groups the context, model, tool, verification, and memory spans for an execution. Traccia Runtime stamps Traccia-compatible `agent.id`, `agent.name`, `session.id`, tenant, environment, and `llm.usage.*` attributes directly, so identity and provider-reported token usage do not depend on provider SDK auto-instrumentation. Existing spans continue to use the OpenTelemetry API; enabling Traccia changes their provider/export pipeline without coupling orchestration to Traccia SDK types.
+Traccia Runtime initializes Traccia once with `service_role: orchestrator` and `auto_start_trace: false`, scopes each run with its stable logical agent identity, and stops and flushes the SDK during FastAPI shutdown. One `agent.run` root span groups the context, model, tool, verification, and memory spans for an execution. Traccia Runtime stamps Traccia-compatible `agent.id`, `agent.name`, `session.id`, tenant, environment, and `llm.usage.*` attributes directly, so identity and provider-reported token usage do not depend on provider SDK auto-instrumentation. Existing spans continue to use the OpenTelemetry API; enabling Traccia changes their provider/export pipeline without coupling orchestration to Traccia SDK types.
+
+Platform policy enforcement is opt-in and separate from Runtime guardrails. When
+`governance_enabled` is true, an application composition root should wrap its agent entry point with
+the Traccia SDK `govern()` function using `governance_agent_id` and `governance_fail_open`. This checks
+the Traccia Platform agent status before the invocation. Traccia Runtime does not duplicate or locally
+evaluate Traccia Platform spend policies. Its agent token, cost, step, and timeout budgets are local
+deterministic termination ceilings.
+
+Each policy boundary emits a clearly named pipeline span such as `agent.policy.input`,
+`agent.policy.before_model`, or `agent.policy.after_tool`. The bounded span names share
+`policy.operation=agent.policy.evaluate` for aggregation and carry `policy.boundary`,
+`policy.subject_type`, and invoked, triggered, and skipped policy counts. Only
+policies whose `applies_to` contract includes that boundary are evaluated. Applicable Runtime
+guardrails emit child spans with `span.type=guardrail`, `guardrail.name`, `guardrail.category`,
+`guardrail.triggered`, `guardrail.enforcement_mode`, `guardrail.boundary`, and reason code. Custom
+policies should declare `applies_to: frozenset[PolicyPoint]`; legacy policies without the field remain
+applicable to every boundary for compatibility.
+With Traccia enabled, the observability adapter creates these spans through the SDK's
+`guardrail_span()` helper. The SDK therefore classifies them as high-confidence Tier-A findings and
+aggregates `guardrail.summary`, detected categories, missing coverage, and findings onto the root
+conversation trace for Guardrail Posture. Conversation and standalone run roots are created through
+the Traccia span lifecycle when this adapter is active; a raw OpenTelemetry root bypasses Traccia's
+pre-export enrichment processors and cannot receive that summary. Without Traccia, the adapter emits the same portable
+OpenTelemetry contract. Detection observes whether a Runtime guardrail ran or fired; it does not
+execute or enforce that guardrail.
 
 Conversation handlers follow Traccia's session model: one user message creates one
 `conversation.turn` trace, while every turn in that conversation shares the stable conversation ID as

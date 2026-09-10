@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Talk to Data V2 — Layered Architecture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f7f8fb;
+      --surface: #ffffff;
+      --surface-2: #eef2f7;
+      --ink: #17222d;
+      --muted: #607081;
+      --line: #cbd5df;
+      --runtime: #087f76;
+      --runtime-soft: #d9f2ee;
+      --domain: #b95f08;
+      --domain-soft: #fff0d8;
+      --customer: #3e61b7;
+      --customer-soft: #e7edff;
+      --experience: #884da7;
+      --experience-soft: #f4e9fa;
+      --success: #267653;
+      --shadow: 0 18px 48px rgba(27, 43, 58, .10);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(8,127,118,.10), transparent 30rem),
+        radial-gradient(circle at 92% 8%, rgba(136,77,167,.10), transparent 28rem),
+        var(--page);
+      color: var(--ink);
+      font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button { font: inherit; }
+    button:focus-visible, summary:focus-visible { outline: 3px solid #f3a43b; outline-offset: 3px; }
+    main { width: min(1500px, calc(100% - 32px)); margin: 28px auto 56px; }
+    header { display: grid; grid-template-columns: 1.3fr .8fr; gap: 28px; align-items: end; }
+    .eyebrow { color: var(--runtime); font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+    h1 { margin: 5px 0 8px; font: 700 clamp(34px, 5vw, 66px)/1.02 Georgia, serif; letter-spacing: -.045em; }
+    header p { max-width: 760px; margin: 0; color: var(--muted); }
+    .ownership { display: grid; gap: 9px; justify-self: end; }
+    .legend-item { display: flex; gap: 10px; align-items: center; color: var(--muted); }
+    .legend-item strong { color: var(--ink); }
+    .shape { width: 24px; height: 18px; flex: none; }
+    .shape.runtime { border-radius: 5px; background: var(--runtime); }
+    .shape.domain { background: var(--domain); clip-path: polygon(20% 0,80% 0,100% 50%,80% 100%,20% 100%,0 50%); }
+    .shape.customer { width: 20px; height: 20px; border-radius: 50%; background: var(--customer); }
+
+    .toolbar { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin: 24px 0 14px; }
+    .toolbar span { margin-right: 4px; color: var(--muted); font-weight: 700; }
+    .view-button {
+      border: 1px solid var(--line); border-radius: 999px; padding: 8px 13px;
+      background: var(--surface); color: var(--ink); cursor: pointer;
+    }
+    .view-button[aria-pressed="true"] { color: white; background: var(--runtime); border-color: var(--runtime); }
+
+    .visual-shell {
+      display: grid; grid-template-columns: minmax(0, 1fr) 370px; gap: 0;
+      overflow: hidden; border: 1px solid var(--line); border-radius: 22px;
+      background: var(--surface); box-shadow: var(--shadow);
+    }
+    .diagram-wrap { min-width: 0; padding: 12px; background: linear-gradient(145deg, #fbfdfd, #f5f7fb); }
+    #architecture-map { display: block; width: 100%; height: auto; min-height: 620px; }
+    .layer-band { stroke-width: 1; }
+    .layer-title { fill: var(--ink); font-size: 16px; font-weight: 800; }
+    .layer-subtitle { fill: var(--muted); font-size: 11px; }
+    .edge { fill: none; stroke: #93a3b2; stroke-width: 2; marker-end: url(#arrow); transition: opacity .25s, stroke .25s, stroke-width .25s; }
+    .edge.branch { stroke-dasharray: 6 6; }
+    .edge.is-active { stroke: #e18a22; stroke-width: 4; opacity: 1; }
+    .edge.is-dim { opacity: .12; }
+    .node { cursor: pointer; transition: opacity .25s, transform .2s; transform-box: fill-box; transform-origin: center; }
+    .node:hover, .node:focus { transform: translateY(-3px); }
+    .node.is-active .node-shape { stroke: #e18a22; stroke-width: 5; filter: url(#lift); }
+    .node.is-selected .node-shape { stroke: #17222d; stroke-width: 4; }
+    .node.is-dim { opacity: .25; }
+    .node-shape { stroke: white; stroke-width: 2; transition: stroke .2s, stroke-width .2s; }
+    .runtime-fill { fill: var(--runtime); }
+    .domain-fill { fill: var(--domain); }
+    .customer-fill { fill: var(--customer); }
+    .node-index { fill: white; font-size: 11px; font-weight: 900; text-anchor: middle; dominant-baseline: middle; }
+    .node-label { fill: var(--ink); font-size: 12px; font-weight: 800; text-anchor: middle; pointer-events: none; }
+    .node-owner { fill: var(--muted); font-size: 9px; text-anchor: middle; text-transform: uppercase; pointer-events: none; }
+    .loop-label { fill: var(--domain); font-size: 10px; font-weight: 800; }
+
+    .detail-panel { border-left: 1px solid var(--line); padding: 24px; background: var(--surface); }
+    .detail-kicker { display: flex; gap: 8px; align-items: center; color: var(--muted); font-weight: 750; }
+    .owner-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--runtime); }
+    .detail-panel h2 { margin: 11px 0 5px; font-size: 25px; line-height: 1.15; }
+    .detail-summary { min-height: 68px; margin: 0 0 19px; color: var(--muted); }
+    .detail-grid { display: grid; gap: 15px; }
+    .detail-block { padding-top: 13px; border-top: 1px solid var(--line); }
+    .detail-block h3 { margin: 0 0 4px; color: var(--runtime); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+    .detail-block p { margin: 0; }
+    .trace-line { display: inline-flex; margin-top: 18px; padding: 7px 10px; border-radius: 7px; background: var(--surface-2); color: var(--muted); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    .how-to-read { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin: 22px 0; }
+    .read-step { padding: 15px 16px; border-left: 4px solid var(--runtime); background: var(--surface); }
+    .read-step:nth-child(2) { border-color: var(--domain); }
+    .read-step:nth-child(3) { border-color: var(--customer); }
+    .read-step:nth-child(4) { border-color: var(--experience); }
+    .read-step b { display: block; margin-bottom: 4px; }
+    .read-step span { color: var(--muted); }
+
+    .layer-notes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    details { border-top: 1px solid var(--line); background: transparent; }
+    summary { padding: 15px 4px; cursor: pointer; font-weight: 800; }
+    details p { margin: 0 4px 16px; color: var(--muted); }
+    details ul { margin: 0 4px 18px; padding-left: 20px; }
+    .boundary { margin-top: 20px; padding: 18px 20px; background: #17222d; color: #f1f5f7; border-radius: 13px; }
+    .boundary strong { color: #7ce0d5; }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark; --page: #10171d; --surface: #172129; --surface-2: #22303a;
+        --ink: #eff5f6; --muted: #a9b7c1; --line: #3a4a55;
+        --runtime: #36bdb0; --runtime-soft: #143b38; --domain: #ef9a45;
+        --domain-soft: #432b18; --customer: #8aa7ff; --customer-soft: #202d54;
+        --experience: #cc8cec; --experience-soft: #3a2545; --shadow: none;
+      }
+      body { background: radial-gradient(circle at 10% 0%, rgba(54,189,176,.10), transparent 30rem), var(--page); }
+      .diagram-wrap { background: linear-gradient(145deg, #16232a, #121a21); }
+      .node-shape { stroke: #172129; }
+      .node-index { fill: #10171d; }
+      .node.is-selected .node-shape { stroke: #eff5f6; }
+      .boundary { background: #0b1116; }
+    }
+    @media (max-width: 1100px) {
+      header { grid-template-columns: 1fr; }
+      .ownership { justify-self: start; grid-template-columns: repeat(3, 1fr); }
+      .visual-shell { grid-template-columns: 1fr; }
+      .detail-panel { border-left: 0; border-top: 1px solid var(--line); }
+      .how-to-read { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 680px) {
+      main { width: min(100% - 18px, 1500px); margin-top: 14px; }
+      .ownership { grid-template-columns: 1fr; }
+      .diagram-wrap { overflow-x: auto; }
+      #architecture-map { width: 980px; min-height: 550px; }
+      .how-to-read, .layer-notes { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+    @media print {
+      body { background: white; } main { width: 100%; margin: 0; }
+      .toolbar { display: none; } .visual-shell { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="eyebrow">Talk to Data · V2 layered architecture</div>
+      <h1>From executive question<br>to governed evidence</h1>
+      <p>This view separates the reusable Traccia Runtime, airline-specific application intelligence, and customer-owned data and models. Select a flow, then click any component to inspect its responsibility and controls.</p>
+    </div>
+    <div class="ownership" aria-label="Ownership legend">
+      <div class="legend-item"><span class="shape runtime"></span><span><strong>Traccia Runtime</strong><br>Reusable and domain-neutral</span></div>
+      <div class="legend-item"><span class="shape domain"></span><span><strong>Airline use case</strong><br>Configuration and plugins</span></div>
+      <div class="legend-item"><span class="shape customer"></span><span><strong>Customer systems</strong><br>Data, identity and models</span></div>
+    </div>
+  </header>
+
+  <nav class="toolbar" aria-label="Architecture flow">
+    <span>Highlight a path:</span>
+    <button class="view-button" type="button" data-flow="all" aria-pressed="true">Whole platform</button>
+    <button class="view-button" type="button" data-flow="descriptive" aria-pressed="false">Descriptive question</button>
+    <button class="view-button" type="button" data-flow="predictive" aria-pressed="false">Predictive scenario</button>
+    <button class="view-button" type="button" data-flow="clarification" aria-pressed="false">Clarification loop</button>
+  </nav>
+
+  <section class="visual-shell">
+    <div class="diagram-wrap">
+      <svg id="architecture-map" viewBox="0 0 1160 780" role="img" aria-labelledby="map-title map-desc">
+        <title id="map-title">Layered Talk to Data architecture</title>
+        <desc id="map-desc">Five horizontal layers show executive experience, agent behavior, Traccia Runtime, airline intelligence, and customer data systems. Connected selectable nodes show the execution flow.</desc>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#93a3b2"></path></marker>
+          <filter id="lift" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="5" stdDeviation="5" flood-opacity=".22"></feDropShadow></filter>
+        </defs>
+
+        <rect class="layer-band" x="12" y="16" width="1136" height="112" rx="22" fill="var(--experience-soft)" stroke="var(--experience)"></rect>
+        <rect class="layer-band" x="12" y="142" width="1136" height="112" rx="22" fill="var(--domain-soft)" stroke="var(--domain)"></rect>
+        <rect class="layer-band" x="12" y="268" width="1136" height="238" rx="22" fill="var(--runtime-soft)" stroke="var(--runtime)"></rect>
+        <rect class="layer-band" x="12" y="520" width="1136" height="112" rx="22" fill="var(--domain-soft)" stroke="var(--domain)"></rect>
+        <rect class="layer-band" x="12" y="646" width="1136" height="118" rx="22" fill="var(--customer-soft)" stroke="var(--customer)"></rect>
+
+        <text class="layer-title" x="34" y="43">1 · Executive experience</text><text class="layer-subtitle" x="34" y="61">What the CXO sees and controls</text>
+        <text class="layer-title" x="34" y="169">2 · Airline agent team</text><text class="layer-subtitle" x="34" y="187">Use-case definitions, prompts and conversational decisions</text>
+        <text class="layer-title" x="34" y="295">3 · Traccia Runtime</text><text class="layer-subtitle" x="34" y="313">Reusable orchestration, governance, durability and assurance</text>
+        <text class="layer-title" x="34" y="547">4 · Airline analytical intelligence</text><text class="layer-subtitle" x="34" y="565">Governed business semantics, calculations and presentation rules</text>
+        <text class="layer-title" x="34" y="673">5 · Customer data and model plane</text><text class="layer-subtitle" x="34" y="691">Authoritative systems and final security boundary</text>
+
+        <path class="edge" data-edge="cx-dashboard" d="M310 72H405"></path>
+        <path class="edge" data-edge="dashboard-conversation" d="M465 96C465 210 420 260 420 315"></path>
+        <path class="edge" data-edge="conversation-router" d="M420 330C420 270 455 230 520 208"></path>
+        <path class="edge" data-edge="router-clarify" d="M520 198C420 165 360 126 292 95"></path>
+        <path class="edge" data-edge="router-semantics" d="M600 219C600 355 410 460 410 574"></path>
+        <path class="edge" data-edge="semantics-planner" d="M495 574C560 540 590 470 590 428"></path>
+        <path class="edge" data-edge="planner-graph" d="M680 386H735"></path>
+        <path class="edge branch" data-edge="graph-query" d="M815 386C830 350 850 339 875 339"></path>
+        <path class="edge branch" data-edge="graph-method" d="M810 408C810 515 705 545 705 574"></path>
+        <path class="edge branch" data-edge="graph-model" d="M840 413C930 470 958 560 958 692"></path>
+        <path class="edge" data-edge="query-data" d="M965 347C965 485 790 610 790 700"></path>
+        <path class="edge" data-edge="method-verify" d="M790 574C910 555 1024 486 1024 428"></path>
+        <path class="edge" data-edge="model-verify" d="M958 692C1085 650 1090 520 1035 428"></path>
+        <path class="edge" data-edge="query-verify" d="M986 351C1030 360 1040 375 1035 386"></path>
+        <path class="edge" data-edge="verify-compose" d="M965 410C915 440 875 495 870 550"></path>
+        <path class="edge" data-edge="compose-answer" d="M870 550C870 330 870 180 875 96"></path>
+        <path class="edge" data-edge="answer-dashboard" d="M815 72H525"></path>
+        <path class="edge branch" data-edge="policy-query" d="M710 339H875"></path>
+        <path class="edge branch" data-edge="cache-graph" d="M620 469C700 470 750 445 780 414"></path>
+        <path class="edge branch" data-edge="identity-policy" d="M280 679C280 520 510 395 590 350"></path>
+        <path class="edge branch" data-edge="retrieval-router" d="M510 679C455 520 475 310 545 222"></path>
+        <text class="loop-label" x="350" y="136">one concise clarification when material</text>
+
+        <g class="node" data-node="executive" tabindex="0" role="button" aria-label="Executive question">
+          <polygon class="node-shape domain-fill" points="190,48 270,48 290,72 270,96 190,96 170,72"></polygon><text class="node-index" x="230" y="72">01</text><text class="node-label" x="230" y="113">Executive question</text>
+        </g>
+        <g class="node" data-node="dashboard" tabindex="0" role="button" aria-label="Conversational dashboard">
+          <polygon class="node-shape domain-fill" points="425,48 505,48 525,72 505,96 425,96 405,72"></polygon><text class="node-index" x="465" y="72">02</text><text class="node-label" x="465" y="113">Conversational canvas</text>
+        </g>
+        <g class="node" data-node="answer" tabindex="0" role="button" aria-label="Evidence-led answer">
+          <polygon class="node-shape domain-fill" points="835,48 915,48 935,72 915,96 835,96 815,72"></polygon><text class="node-index" x="875" y="72">15</text><text class="node-label" x="875" y="113">Evidence-led answer</text>
+        </g>
+
+        <g class="node" data-node="router" tabindex="0" role="button" aria-label="Intent and sufficiency agents">
+          <polygon class="node-shape domain-fill" points="530,174 610,174 630,198 610,222 530,222 510,198"></polygon><text class="node-index" x="570" y="198">04</text><text class="node-label" x="570" y="239">Intent + sufficiency</text>
+        </g>
+
+        <g class="node" data-node="conversation" tabindex="0" role="button" aria-label="Conversation runtime">
+          <rect class="node-shape runtime-fill" x="360" y="315" width="120" height="48" rx="10"></rect><text class="node-index" x="420" y="339">03</text><text class="node-label" x="420" y="380">Conversation service</text><text class="node-owner" x="420" y="394">Runtime</text>
+        </g>
+        <g class="node" data-node="policy" tabindex="0" role="button" aria-label="Policy and query governance">
+          <rect class="node-shape runtime-fill" x="590" y="315" width="120" height="48" rx="10"></rect><text class="node-index" x="650" y="339">07</text><text class="node-label" x="650" y="380">Policy + governance</text><text class="node-owner" x="650" y="394">Runtime</text>
+        </g>
+        <g class="node" data-node="query" tabindex="0" role="button" aria-label="Semantic query execution">
+          <rect class="node-shape runtime-fill" x="875" y="315" width="120" height="48" rx="10"></rect><text class="node-index" x="935" y="339">09</text><text class="node-label" x="935" y="380">Governed query</text><text class="node-owner" x="935" y="394">Runtime</text>
+        </g>
+        <g class="node" data-node="planner" tabindex="0" role="button" aria-label="Semantic graph planner">
+          <rect class="node-shape runtime-fill" x="560" y="386" width="120" height="48" rx="10"></rect><text class="node-index" x="620" y="410">06</text><text class="node-label" x="620" y="451">Semantic graph planner</text><text class="node-owner" x="620" y="465">Runtime</text>
+        </g>
+        <g class="node" data-node="graph" tabindex="0" role="button" aria-label="Analytical graph engine">
+          <rect class="node-shape runtime-fill" x="735" y="386" width="120" height="48" rx="10"></rect><text class="node-index" x="795" y="410">08</text><text class="node-label" x="795" y="451">Analytical DAG</text><text class="node-owner" x="795" y="465">Runtime</text>
+        </g>
+        <g class="node" data-node="verify" tabindex="0" role="button" aria-label="Verification and evaluation">
+          <rect class="node-shape runtime-fill" x="965" y="386" width="120" height="48" rx="10"></rect><text class="node-index" x="1025" y="410">13</text><text class="node-label" x="1025" y="451">Verify + evaluate</text><text class="node-owner" x="1025" y="465">Runtime</text>
+        </g>
+        <g class="node" data-node="cache" tabindex="0" role="button" aria-label="Cache and durable execution">
+          <rect class="node-shape runtime-fill" x="475" y="449" width="145" height="42" rx="10"></rect><text class="node-index" x="547" y="470">↻</text><text class="node-label" x="547" y="510">Cache + durability</text>
+        </g>
+        <g class="node" data-node="telemetry" tabindex="0" role="button" aria-label="Traccia telemetry and audit">
+          <rect class="node-shape runtime-fill" x="210" y="449" width="145" height="42" rx="10"></rect><text class="node-index" x="282" y="470">◎</text><text class="node-label" x="282" y="510">Traccia telemetry</text>
+        </g>
+
+        <g class="node" data-node="semantics" tabindex="0" role="button" aria-label="Airline semantic layer">
+          <polygon class="node-shape domain-fill" points="360,550 460,550 485,574 460,598 360,598 335,574"></polygon><text class="node-index" x="410" y="574">05</text><text class="node-label" x="410" y="615">Airline semantics</text>
+        </g>
+        <g class="node" data-node="methods" tabindex="0" role="button" aria-label="Airline analytical methods">
+          <polygon class="node-shape domain-fill" points="655,550 755,550 780,574 755,598 655,598 630,574"></polygon><text class="node-index" x="705" y="574">11</text><text class="node-label" x="705" y="615">Airline methods</text>
+        </g>
+        <g class="node" data-node="compose" tabindex="0" role="button" aria-label="Airline response composition">
+          <polygon class="node-shape domain-fill" points="820,550 920,550 945,574 920,598 820,598 795,574"></polygon><text class="node-index" x="870" y="574">14</text><text class="node-label" x="870" y="615">Response strategy</text>
+        </g>
+
+        <g class="node" data-node="identity" tabindex="0" role="button" aria-label="Customer identity and access">
+          <circle class="node-shape customer-fill" cx="280" cy="710" r="31"></circle><text class="node-index" x="280" y="710">ID</text><text class="node-label" x="280" y="755">Identity + RLS</text>
+        </g>
+        <g class="node" data-node="retrieval" tabindex="0" role="button" aria-label="Schema and catalog retrieval">
+          <circle class="node-shape customer-fill" cx="510" cy="710" r="31"></circle><text class="node-index" x="510" y="710">RAG</text><text class="node-label" x="510" y="755">Schema knowledge</text>
+        </g>
+        <g class="node" data-node="data" tabindex="0" role="button" aria-label="Curated analytical marts">
+          <circle class="node-shape customer-fill" cx="790" cy="710" r="31"></circle><text class="node-index" x="790" y="710">10</text><text class="node-label" x="790" y="755">Curated marts</text>
+        </g>
+        <g class="node" data-node="models" tabindex="0" role="button" aria-label="Customer analytical model services">
+          <circle class="node-shape customer-fill" cx="958" cy="710" r="31"></circle><text class="node-index" x="958" y="710">12</text><text class="node-label" x="958" y="755">Model services</text>
+        </g>
+      </svg>
+    </div>
+
+    <aside class="detail-panel" aria-live="polite" aria-atomic="true">
+      <div class="detail-kicker"><span class="owner-dot" id="detail-dot"></span><span id="detail-owner">Traccia Runtime</span> · <span id="detail-layer">Orchestration</span></div>
+      <h2 id="detail-title">Analytical DAG</h2>
+      <p class="detail-summary" id="detail-summary">Executes a finite, validated graph while keeping every intermediate result independently addressable.</p>
+      <div class="detail-grid">
+        <div class="detail-block"><h3>Why it exists</h3><p id="detail-why"></p></div>
+        <div class="detail-block"><h3>What it receives</h3><p id="detail-input"></p></div>
+        <div class="detail-block"><h3>What it does</h3><p id="detail-action"></p></div>
+        <div class="detail-block"><h3>What it produces</h3><p id="detail-output"></p></div>
+        <div class="detail-block"><h3>Safety boundary</h3><p id="detail-control"></p></div>
+      </div>
+      <span class="trace-line" id="detail-trace">span: analytical_graph.run</span>
+    </aside>
+  </section>
+
+  <section class="how-to-read" aria-label="How responsibilities are separated">
+    <div class="read-step"><b>Language models propose</b><span>Intent, clarification, query tasks and narrative are constrained by typed contracts.</span></div>
+    <div class="read-step"><b>Airline plugins calculate</b><span>LF, yield, booking curves, scenario rules and opportunity methods stay outside Runtime.</span></div>
+    <div class="read-step"><b>Customer systems establish truth</b><span>Curated marts, RLS, identity, model endpoints and data quality remain customer-owned.</span></div>
+    <div class="read-step"><b>Traccia Runtime controls</b><span>Execution, policy, budgets, provenance, recovery, evaluation, telemetry and audit are reusable.</span></div>
+  </section>
+
+  <section class="layer-notes" aria-label="Layer descriptions">
+    <details open><summary>Executive experience</summary><p>A full conversational canvas supports free-flow questions, minimum necessary clarification, reconnectable progress, tables, charts, SQL where permitted, downloads, assumptions and suggested drill-downs.</p></details>
+    <details><summary>Airline agent team</summary><p>Configured router, sufficiency, SQL, insight and verifier agents use different model tiers. Their prompts, semantic references and repair rules are airline application assets, not hard-coded Runtime behavior.</p></details>
+    <details><summary>Traccia Runtime services</summary><p>Conversation APIs, semantic graph planning, schema-validated DAG execution, scoped cache, PostgreSQL checkpoints and leases, governance, model/method registries, verification, evaluation, OpenTelemetry and Traccia export are reusable across domains.</p></details>
+    <details><summary>Airline analytical intelligence</summary><p>The versioned semantic layer and method plugins define airline metrics, dimensions, joins, thresholds, descriptive calculations and scenario limitations. Predictive claims require a validated analytical model, not another LLM prompt.</p></details>
+    <details><summary>Customer data and models</summary><p>The customer publishes governed read-only marts, schema/catalog knowledge, stable keys, freshness/completeness evidence and approved forecast, causal, simulation or optimization endpoints. Database grants and RLS are the final access boundary.</p></details>
+    <details><summary>Assurance path</summary><p>Every result carries semantic digest, query fingerprint, source and column lineage, method/model versions and upstream result IDs. Verification checks claims against cells; evaluation gates changes against golden questions before promotion.</p></details>
+  </section>
+
+  <div class="boundary"><strong>Hard boundary:</strong> Traccia Runtime does not own airline formulas, warehouse transformations, customer data, business thresholds, or predictive models. It provides the contracts and controls that make those components composable, bounded, durable and auditable.</div>
+</main>
+
+<script>
+  const ownership = {
+    runtime: { label: 'Traccia Runtime', color: 'var(--runtime)' },
+    domain: { label: 'Airline use case', color: 'var(--domain)' },
+    customer: { label: 'Customer specific', color: 'var(--customer)' }
+  };
+
+  const details = {
+    executive: {owner:'domain',layer:'Executive experience',title:'Executive question',summary:'A natural-language business question, follow-up or what-if request starts the workflow.',why:'CXOs should not need to know tables, SQL, metric names or agent boundaries.',input:'Free-form text plus authenticated user, tenant and conversation context.',action:'Captures the business objective and preserves conversational continuity.',output:'A persisted user message linked to a conversation turn.',control:'Identity and tenant context are established before any data work begins.',trace:'conversation.message.received'},
+    dashboard: {owner:'domain',layer:'Executive experience',title:'Conversational canvas',summary:'The dashboard renders a ChatGPT-like analytical experience rather than a small support widget.',why:'The interaction must support exploration, clarification, drill-down and return visits.',input:'Conversation history, SSE progress events, response blocks and role-aware suggestions.',action:'Streams safe progress, renders tables/charts/notices and reconnects without duplicating turns.',output:'A responsive conversation with elapsed time, artifacts and follow-up actions.',control:'Downloads, SQL visibility and actions follow explicit policy; safe summaries never reveal private reasoning.',trace:'conversation.turn'},
+    answer: {owner:'domain',layer:'Executive experience',title:'Evidence-led answer',summary:'A verified narrative, visualization or bounded limitation is returned to the executive.',why:'An executive answer must distinguish measured facts, scenarios, assumptions and unavailable evidence.',input:'Verified claims, typed results, provenance, warnings, confidence and display policy.',action:'Presents the useful conclusion first, followed by supporting evidence and drill-downs.',output:'Narrative, tables, charts, SQL when permitted, warnings, confidence and citations.',control:'Unsupported or causal claims are removed or downgraded before presentation.',trace:'conversation.response.completed'},
+    router: {owner:'domain',layer:'Airline agent team',title:'Intent and sufficiency agents',summary:'Airline-configured agents classify the analytical objective and decide whether one material clarification is needed.',why:'“Revenue impact”, “demand” and “market share” can imply very different governed methods.',input:'Question, conversation memory, retrieved schema context and semantic catalogue.',action:'Selects analysis kind, certified metrics/dimensions, time basis and required method or model capability.',output:'A structured intent or a concise clarification request.',control:'Bounded repair and clarification limits prevent loops; semantic references must exist and meet certification.',trace:'agent.run · talk-to-data-router'},
+    conversation: {owner:'runtime',layer:'Runtime orchestration',title:'Conversation service',summary:'Persists turns, streams events, resumes interrupted work and coordinates the configured handler.',why:'Dashboard requests must survive refreshes, process delays and clarification pauses.',input:'Authenticated conversation/message requests and a registered application handler.',action:'Creates messages, dispatches work, exposes ordered SSE history and recovers pending responses.',output:'Durable conversation state and versioned events.',control:'Tenant/user isolation, optimistic updates, event bounds and cancellation are enforced centrally.',trace:'traccia_runtime.conversation'},
+    policy: {owner:'runtime',layer:'Runtime governance',title:'Policy and query governance',summary:'Evaluates purpose, authorization, source trust, freshness and workload before data execution.',why:'A syntactically safe query can still be unauthorized, stale, incomplete or too expensive.',input:'Identity, purpose, source evidence, requested metrics/columns/actions and query estimate.',action:'Applies certification, freshness, completeness, metric/column, row/scan/compute and export rules.',output:'Allow or deny with stable reason codes, fingerprint and audit metadata.',control:'Missing trust or freshness evidence fails closed; database RLS and grants remain final.',trace:'query_governance.evaluate'},
+    planner: {owner:'runtime',layer:'Runtime analytics',title:'Semantic graph planner',summary:'Turns independently governed semantic tasks and explicit transformations into a validated DAG.',why:'Comparisons, funnels and scenarios must not flatten unrelated result sets or hide dependencies.',input:'Versioned semantic layer, SemanticQueryTasks and explicit downstream nodes.',action:'Compiles each safe query, attaches semantic digest and validates all dependencies and schemas.',output:'A finite AnalyticalGraph with separately addressable result handles.',control:'Implicit multi-fact aggregation, unsafe fan-out and unlowered compound analytics fail closed.',trace:'semantic.plan'},
+    graph: {owner:'runtime',layer:'Runtime analytics',title:'Analytical DAG',summary:'Executes a finite, validated graph while keeping every intermediate result independently addressable.',why:'Complex questions contain parallel queries, transformations, models, verification and composition.',input:'Typed nodes with dependencies, schemas, retry/cache policy, budgets and concurrency keys.',action:'Runs independent nodes concurrently, checkpoints state, retries bounded failures and resumes incomplete work.',output:'Per-node AnalyticalResults with lineage, status and durable execution metadata.',control:'Deployment concurrency and timeout caps override looser graph values; all loops and payloads are bounded.',trace:'analytical_graph.run'},
+    query: {owner:'runtime',layer:'Runtime data access',title:'Governed semantic query',summary:'Compiles and executes parameterized read-only PostgreSQL against approved sources.',why:'LLMs must not invent arbitrary tables, joins, aggregation rules or string-interpolated filters.',input:'Certified metrics/dimensions, filters, time/snapshot rules, identity and workload estimate.',action:'Enforces join/fan-out, ratio, semi-additive, freshness and SCD rules; executes through a bounded backend.',output:'Rows, columns, timing, truncation, source evidence and authorization-aware query fingerprint.',control:'Read-only SQL validation, statement timeout, actual-row checks, RLS and scoped caching protect the path.',trace:'governed_query.execute'},
+    verify: {owner:'runtime',layer:'Runtime assurance',title:'Verification and evaluation',summary:'Checks that every material claim is supported by a precise result cell and approved method.',why:'Plausible language is not sufficient evidence for an executive decision.',input:'Proposed claims, result handles, semantic certification, model versions, sample/window requirements and golden cases.',action:'Reconciles numbers, links claim-to-cell provenance and runs plan/SQL/numeric/claim regression gates.',output:'Approved claims, conservative corrections or a bounded failure and promotion score.',control:'Numerical mismatch, stale evidence, missing lineage, insufficient samples or failed evaluation blocks promotion.',trace:'analytical.verify · evaluation.run'},
+    cache: {owner:'runtime',layer:'Runtime performance',title:'Scoped cache and durable execution',summary:'Reduces repeat latency without weakening tenant, user or authorization boundaries.',why:'Schema retrieval, exact safe inference and read-only queries are expensive and frequently repeated.',input:'Hashed request material, cache policy, tenant/user/session/run scope and data version.',action:'Uses bounded memory or Redis, coalesces misses, and stores checkpoints or leased work in PostgreSQL.',output:'Traced cache outcomes and restart-safe execution state.',control:'Side effects, raw streaming responses and sensitive payloads bypass cache; keys and values never enter telemetry.',trace:'cache.lookup · worker.execute'},
+    telemetry: {owner:'runtime',layer:'Runtime observability',title:'Traccia telemetry and audit',summary:'Correlates the complete conversation, agent, query, method, model and verification hierarchy.',why:'Operators need latency, usage, outcome and governance evidence across the entire lifecycle.',input:'OpenTelemetry spans/metrics and immutable audit contracts with run, session, tenant, user and step IDs.',action:'Redacts sensitive fields and exports bounded operational metadata to Traccia.',output:'Searchable traces, metrics, policy decisions, evaluation evidence and truthful outcomes.',control:'Private reasoning, credentials, cache material and unrestricted customer result sets are never exported.',trace:'traccia conversation trace'},
+    semantics: {owner:'domain',layer:'Airline intelligence',title:'Airline semantic layer',summary:'Defines the governed meaning of airline metrics, dimensions, joins, time rules and sources.',why:'Terms such as load factor, yield, flown revenue and same-DTD require approved definitions.',input:'Customer-approved tables/views, owners, formulas, grains, certifications, sensitivities and join relationships.',action:'Maps business language to canonical references and exposes a versioned digest to planners and audits.',output:'Validated YAML contracts and compiler-ready semantic requests.',control:'Draft metrics, incompatible dimensions, missing filters and unsafe joins cannot execute.',trace:'semantic_layer.version + digest'},
+    methods: {owner:'domain',layer:'Airline intelligence',title:'Airline analytical methods',summary:'Versioned plugins calculate descriptive, diagnostic and bounded scenario outcomes.',why:'Revenue contribution, booking pace, opportunity ranking and constant-volume sensitivity need deterministic business rules.',input:'Named AnalyticalResult handles, governed parameters, required history/sample size and model artifacts.',action:'Runs an airline-owned implementation registered through the Runtime method SDK.',output:'AnalysisOutcome with values, assumptions, evidence IDs, warnings, uncertainty and method version.',control:'Requirements, validation/backtest status and approval metadata are checked before invocation.',trace:'analytical_method.invoke'},
+    compose: {owner:'domain',layer:'Airline intelligence',title:'Response strategy',summary:'Transforms verified analytical evidence into executive-friendly response blocks.',why:'Presentation choices are use-case behavior and should remain independent of orchestration.',input:'Verified facts, analysis outcome, SQL visibility decision and dashboard capabilities.',action:'Selects narrative, table, chart, notice, artifact and suggested follow-up blocks.',output:'A typed response contract suitable for the dashboard.',control:'Warnings and assumptions remain visible; presentation cannot introduce new unsupported claims.',trace:'response.compose'},
+    identity: {owner:'customer',layer:'Customer platform',title:'Identity, authorization and RLS',summary:'Customer identity establishes the user, tenant, roles and final data permissions.',why:'Runtime policy cannot replace the customer’s source-of-truth access controls.',input:'OIDC/JWT or service identity, role mappings, tenant context and database session claims.',action:'Authenticates users and applies grants, row-level security and column masking.',output:'A least-privilege identity and authorization fingerprint.',control:'Development headers are not a production identity mechanism.',trace:'auth.decision'},
+    retrieval: {owner:'customer',layer:'Customer data platform',title:'Schema and catalogue knowledge',summary:'Vectorized database context and catalogue metadata ground intent and SQL planning.',why:'The agent needs relevant schema, status values, grain, join and business-definition context without embedding the entire catalogue.',input:'database_context.md, semantic metadata, lineage and optionally pgvector/other vector stores.',action:'Chunks, embeds, retrieves, reranks, deduplicates and token-packs the relevant schema evidence.',output:'Attributed context documents scoped to the tenant and query.',control:'Retrieval is context, not authorization; embedding model/version changes require re-indexing.',trace:'context.retrieved'},
+    data: {owner:'customer',layer:'Customer data platform',title:'Curated analytical marts',summary:'Authoritative, read-only analytical products supply the evidence used by the agent.',why:'Raw operational feeds alone cannot guarantee conformed grain, stable keys, quality or performance.',input:'PNR, inventory, schedules, competitor fares, agency, group, Series, campaign, cost and operations feeds.',action:'Customer pipelines normalize keys, dates, currency, snapshots and business events into certified views.',output:'Fresh, complete and reconciled marts with ownership and lineage.',control:'Read-only role, RLS, quotas, backups, retention and warehouse operations are customer responsibilities.',trace:'data.source + freshness'},
+    models: {owner:'customer',layer:'Customer model plane',title:'Analytical model services',summary:'Validated forecast, causal, simulation or optimization endpoints handle non-deterministic analytical claims.',why:'An LLM cannot substitute for elasticity, demand forecasting or network optimization.',input:'Versioned feature sets, scenario parameters, constraints and model lineage.',action:'Runs the approved customer or vendor model behind the Runtime ModelService interface.',output:'Predictions or recommendations with version, confidence interval, drift and feature lineage.',control:'Unhealthy, drifted, unavailable or unapproved models block safely or follow a declared fallback.',trace:'model_service.invoke'}
+  };
+
+  const flows = {
+    all: [],
+    descriptive: ['executive','dashboard','conversation','router','semantics','planner','policy','graph','query','data','methods','verify','compose','answer','telemetry','cache','identity','retrieval'],
+    predictive: ['executive','dashboard','conversation','router','semantics','planner','policy','graph','query','data','models','verify','compose','answer','telemetry','cache','identity','retrieval'],
+    clarification: ['executive','dashboard','conversation','router','identity','retrieval']
+  };
+  const flowEdges = {
+    descriptive: ['cx-dashboard','dashboard-conversation','conversation-router','router-semantics','semantics-planner','planner-graph','policy-query','graph-query','query-data','graph-method','method-verify','query-verify','verify-compose','compose-answer','answer-dashboard','cache-graph','identity-policy','retrieval-router'],
+    predictive: ['cx-dashboard','dashboard-conversation','conversation-router','router-semantics','semantics-planner','planner-graph','policy-query','graph-query','query-data','graph-model','model-verify','query-verify','verify-compose','compose-answer','answer-dashboard','cache-graph','identity-policy','retrieval-router'],
+    clarification: ['cx-dashboard','dashboard-conversation','conversation-router','router-clarify','identity-policy','retrieval-router']
+  };
+
+  const nodes = [...document.querySelectorAll('.node')];
+  const edges = [...document.querySelectorAll('.edge')];
+  const buttons = [...document.querySelectorAll('.view-button')];
+
+  function showDetail(id) {
+    const item = details[id];
+    if (!item) return;
+    nodes.forEach(node => node.classList.toggle('is-selected', node.dataset.node === id));
+    document.getElementById('detail-owner').textContent = ownership[item.owner].label;
+    document.getElementById('detail-layer').textContent = item.layer;
+    document.getElementById('detail-dot').style.background = ownership[item.owner].color;
+    document.getElementById('detail-title').textContent = item.title;
+    document.getElementById('detail-summary').textContent = item.summary;
+    document.getElementById('detail-why').textContent = item.why;
+    document.getElementById('detail-input').textContent = item.input;
+    document.getElementById('detail-action').textContent = item.action;
+    document.getElementById('detail-output').textContent = item.output;
+    document.getElementById('detail-control').textContent = item.control;
+    document.getElementById('detail-trace').textContent = 'trace: ' + item.trace;
+  }
+
+  function setFlow(name) {
+    const activeNodes = new Set(flows[name]);
+    const activeEdges = new Set(flowEdges[name] || []);
+    const showAll = name === 'all';
+    nodes.forEach(node => {
+      const active = activeNodes.has(node.dataset.node);
+      node.classList.toggle('is-active', !showAll && active);
+      node.classList.toggle('is-dim', !showAll && !active);
+    });
+    edges.forEach(edge => {
+      const active = activeEdges.has(edge.dataset.edge);
+      edge.classList.toggle('is-active', !showAll && active);
+      edge.classList.toggle('is-dim', !showAll && !active);
+    });
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.flow === name)));
+  }
+
+  nodes.forEach(node => {
+    node.addEventListener('click', () => showDetail(node.dataset.node));
+    node.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        showDetail(node.dataset.node);
+      }
+    });
+  });
+  buttons.forEach(button => button.addEventListener('click', () => setFlow(button.dataset.flow)));
+  showDetail('graph');
+</script>
+</body>
+</html>

@@ -6,9 +6,14 @@ from traccia_runtime.conversations.contracts import (
     ConversationEvent,
     ConversationMessage,
     ConversationTurnResult,
+    DetailsBlock,
     MessageStatus,
     NoticeBlock,
     TableBlock,
+)
+from traccia_runtime.conversations.presentation import (
+    ConversationPresentation,
+    PresentationAudience,
 )
 from traccia_runtime.conversations.service import (
     ConversationHandlerRegistry,
@@ -24,10 +29,13 @@ __all__ = [
     "ConversationEvent",
     "ConversationHandlerRegistry",
     "ConversationMessage",
+    "ConversationPresentation",
     "ConversationService",
     "ConversationTurnResult",
+    "DetailsBlock",
     "MessageStatus",
     "NoticeBlock",
+    "PresentationAudience",
     "RuntimeConversationHandler",
     "TableBlock",
 ]

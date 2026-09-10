@@ -101,7 +101,7 @@ class AnthropicProvider(OpenAICompatibleProvider):
                     {
                         "type": "tool_use",
                         "id": call.id,
-                        "name": call.name,
+                        "name": self._wire_tool_name(call.name),
                         "input": call.arguments,
                     }
                     for call in message.tool_calls
@@ -119,7 +119,11 @@ class AnthropicProvider(OpenAICompatibleProvider):
             payload["temperature"] = request.temperature
         if request.tools:
             payload["tools"] = [
-                {"name": tool.name, "description": tool.description, "input_schema": tool.input_schema}
+                {
+                    "name": self._wire_tool_name(tool.name),
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                }
                 for tool in request.tools
             ]
         payload.update(request.extensions)
@@ -128,7 +132,11 @@ class AnthropicProvider(OpenAICompatibleProvider):
     def _response(self, data: dict[str, Any], started: float, raw: bool) -> ModelResponse:
         text = "".join(item.get("text", "") for item in data.get("content", ()) if item.get("type") == "text")
         calls = tuple(
-            ToolCall(id=item["id"], name=item["name"], arguments=item.get("input", {}))
+            ToolCall(
+                id=item["id"],
+                name=self._runtime_tool_name(item["name"]),
+                arguments=item.get("input", {}),
+            )
             for item in data.get("content", ())
             if item.get("type") == "tool_use"
         )
@@ -186,7 +194,9 @@ class AnthropicProvider(OpenAICompatibleProvider):
                         block = data.get("content_block", {})
                         if block.get("type") == "tool_use":
                             call_parts[data["index"]] = {
-                                "id": block["id"], "name": block["name"], "json": ""
+                                "id": block["id"],
+                                "name": self._runtime_tool_name(block["name"]),
+                                "json": "",
                             }
                     elif event_type == "content_block_delta":
                         delta = data.get("delta", {})

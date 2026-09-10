@@ -107,6 +107,11 @@ It also exposes a dashboard-ready conversation service with durable messages, re
 typed rich-result blocks, a YAML semantic layer, bounded analytical planning, application-owned
 analytical tools, independent verification, and optional read-only query execution.
 
+The [Virtual Teaching Assistant](examples/virtual_teaching_assistant/README.md) demonstrates a
+grounded Responsible AI learning experience with traceable PII redaction, cost controls, academic
+integrity and educational-equity guardrails, a realistic learner UI, and AWS ECS deployment
+assets.
+
 The generic conversation endpoints are:
 
 - `POST /v1/conversations`

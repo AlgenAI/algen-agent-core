@@ -98,6 +98,15 @@ feature_flags:
   talk_to_data_show_response_time: true
   # Stream and persist safe execution-stage summaries. This never exposes model reasoning.
   talk_to_data_show_progress: true
+  # Emit validated Vega-Lite chart blocks alongside accessible result tables.
+  talk_to_data_show_charts: true
+
+# Runtime-wide audience and disclosure controls. Operational diagnostics remain in telemetry.
+conversation_presentation:
+  progress_audience: business
+  error_audience: business
+  show_technical_details: false
+  technical_details_expanded: false
 
 api:
   host: 0.0.0.0
@@ -197,7 +206,7 @@ agents:
     tags: [example, multi-agent, router, analytics]
 
   - name: talk-to-data-planner
-    version: 1.3.0
+    version: 1.4.0
     description: Produces bounded evidence and analytical-method plans from governed semantic definitions
     capabilities: [analysis-planning, semantic-layer, tool-selection, data-sufficiency]
     system_instructions: |
@@ -207,16 +216,20 @@ agents:
       not SQL aliases. Never put generic labels such as period or value in dimensions unless those exact
       names are in allowed_dimension_names. Select exactly one available analytics tool. Expected
       columns and tool parameters must agree. SQL output aliases belong only in expected_columns; use
-      stable aliases there such as revenue, bookings, load_factor, yield, route, flight, period, value.
+      stable aliases there such as ticket_revenue, bookings, load_factor, yield, route, flight, period,
+      value.
       analytics_tool_parameter_schemas are mandatory contracts. Supply every required property using
       the exact property name and do not invent aliases such as average_fare_change_pct. In particular,
-      static_fare_scenario requires value_column and percent_change.
+      static_fare_scenario requires value_column and percent_change. Its value_column must be exactly
+      ticket_revenue, the input query must select the governed ticket_revenue metric, and
+      expected_columns must contain ticket_revenue. Never apply it to average_fare: that would calculate
+      only a per-passenger change rather than the requested portfolio revenue impact.
       Every parameter ending in _column must exactly match an expected_columns alias from the analysis
       input query. If a plan contains multiple queries, set input_task_id to the one query whose rows
       the analytical tool must consume; other queries are supporting display evidence and are never
       combined with the analysis input. For a static fare scenario, normally produce one aggregate
-      baseline query with expected column revenue and value_column= revenue. Add a granular breakdown
-      only when the user requests it, and then identify the analysis query with input_task_id.
+      baseline query with expected column ticket_revenue and value_column=ticket_revenue. Add a granular
+      breakdown only when the user requests it, and then identify the analysis query with input_task_id.
 
       If validation_error and invalid_plan are present, repair that plan instead of repeating it. For
       time analysis choose the concrete governed dimension that represents the intended date or days
@@ -328,8 +341,9 @@ agents:
         parameter object per placeholder with consecutive positions. Do not parameterize identifiers.
       - Preserve the requested grain and avoid duplicate amplification in joins.
       - Ranking requests such as lowest, highest, top, or bottom require an explicit ORDER BY in the
-        requested direction and a numeric LIMIT no greater than 100. For flight-level inventory,
-        aggregate RBD rows before ordering; never return one row per RBD unless explicitly requested.
+        requested direction and a numeric LIMIT no greater than 100. Use LIMIT 10 when the user does
+        not specify a result count. For flight-level inventory, aggregate RBD rows before ordering;
+        never return one row per RBD unless explicitly requested.
       - Project every task.expected_columns value as an explicit SQL alias with exactly the same name.
         Tool parameters ending in _column reference those aliases and must resolve in the returned rows.
       - Return baseline evidence for deterministic analytical tools. Do not calculate scenario outputs

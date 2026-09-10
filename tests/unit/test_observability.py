@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -78,9 +79,7 @@ def test_traccia_adapter_lifecycle_and_run_identity(
 
     adapter.start()
     adapter.start()
-    with adapter.run_scope(
-        agent_id="agent@1.0.0", agent_name="agent", tenant_id="tenant"
-    ):
+    with adapter.run_scope(agent_id="agent@1.0.0", agent_name="agent", tenant_id="tenant"):
         pass
     adapter.stop()
 
@@ -110,6 +109,78 @@ def test_traccia_adapter_lifecycle_and_run_identity(
     }
 
 
+def test_traccia_adapter_uses_sdk_guardrail_span(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Any]] = []
+    fake = SimpleNamespace(
+        init=lambda **options: calls.append(("init", options)),
+        runtime_config=FakeRuntimeConfig(calls),
+        stop_tracing=lambda timeout: None,
+    )
+
+    @contextmanager
+    def guardrail_span(name: str, **attributes: Any) -> Iterator[RecordedSpan]:
+        calls.append((name, attributes))
+        yield RecordedSpan(name=name, parent=None)
+
+    guardrails = SimpleNamespace(guardrail_span=guardrail_span)
+    monkeypatch.setattr(
+        "traccia_runtime.observability.traccia_adapter.importlib.import_module",
+        lambda name: guardrails if name == "traccia.guardrails" else fake,
+    )
+    adapter = TracciaObservabilityAdapter(TracciaSettings(enabled=True), "traccia-runtime-test")
+    monkeypatch.setattr(adapter, "_register_otel_provider", lambda provider: None)
+
+    with adapter.guardrail_scope(
+        name="pii",
+        category="pii",
+        enforcement_mode="warn",
+        policy_id="policy-1",
+    ) as span:
+        span.set_attribute("guardrail.triggered", True)
+
+    assert (
+        "pii",
+        {
+            "category": "pii",
+            "enforcement_mode": "warn",
+            "policy_id": "policy-1",
+        },
+    ) in calls
+
+
+def test_traccia_managed_root_receives_guardrail_summary() -> None:
+    traccia = pytest.importorskip("traccia")
+    detector_module = pytest.importorskip("traccia.processors.guardrail_detector")
+    tracer_module = pytest.importorskip("traccia.tracer")
+    original = traccia.get_tracer_provider()
+    provider = tracer_module.TracerProvider()
+    provider.add_span_processor(detector_module.GuardrailDetectorProcessor())
+    traccia.set_tracer_provider(provider)
+    adapter = TracciaObservabilityAdapter(TracciaSettings(enabled=True), "traccia-runtime-test")
+    adapter._module = traccia
+    adapter._started = True
+    try:
+        scope = adapter.span_scope(
+            "conversation.turn",
+            attributes={"span.type": "agent", "agent.id": "test-agent"},
+            root=True,
+        )
+        assert scope is not None
+        with scope as root:
+            with adapter.guardrail_scope(
+                name="pii", category="pii", enforcement_mode="warn"
+            ) as guardrail:
+                guardrail.set_attribute("guardrail.triggered", True)
+        summary = json.loads(root.attributes["guardrail.summary"])
+        assert summary["triggered_categories"] == ["pii"]
+        assert summary["coverage_confidence"] == "high"
+    finally:
+        traccia.set_tracer_provider(original)
+        adapter._started = False
+
+
 def test_traccia_adapter_reports_missing_optional_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -119,9 +190,7 @@ def test_traccia_adapter_reports_missing_optional_dependency(
     monkeypatch.setattr(
         "traccia_runtime.observability.traccia_adapter.importlib.import_module", missing
     )
-    adapter = TracciaObservabilityAdapter(
-        TracciaSettings(enabled=True), "traccia-runtime-test"
-    )
+    adapter = TracciaObservabilityAdapter(TracciaSettings(enabled=True), "traccia-runtime-test")
     with pytest.raises(ConfigurationError, match=r"\[traccia\]"):
         adapter.start()
 
@@ -148,9 +217,7 @@ async def test_runtime_scopes_run_with_agent_identity() -> None:
 
     class RecordingObservability(NoopObservabilityAdapter):
         @contextmanager
-        def run_scope(
-            self, *, agent_id: str, agent_name: str, tenant_id: str
-        ) -> Iterator[None]:
+        def run_scope(self, *, agent_id: str, agent_name: str, tenant_id: str) -> Iterator[None]:
             calls.append(
                 (
                     "enter",
@@ -180,7 +247,7 @@ async def test_runtime_scopes_run_with_agent_identity() -> None:
         (
             "enter",
             {
-                "agent_id": "test-agent@1.0.0",
+                "agent_id": "test-agent",
                 "agent_name": "test-agent",
                 "tenant_id": "tenant",
             },
@@ -214,9 +281,7 @@ class RecordingTracer:
         span = RecordedSpan(
             name=name,
             parent=(
-                None
-                if context is not None
-                else self._current[-1].name if self._current else None
+                None if context is not None else self._current[-1].name if self._current else None
             ),
             attributes=dict(attributes or {}),
         )
@@ -253,14 +318,26 @@ async def test_runtime_emits_one_root_trace_with_traccia_semantics() -> None:
     assert all(span.name == "agent.run" or span.parent is not None for span in tracer.spans)
 
     root = roots[0]
-    assert root.attributes["agent.id"] == "test-agent@1.0.0"
+    assert root.attributes["agent.id"] == "test-agent"
     assert root.attributes["agent.name"] == "test-agent"
     assert root.attributes["agent.version"] == "1.0.0"
+    assert root.attributes["agent.definition.id"] == "test-agent@1.0.0"
+    assert root.attributes["gen_ai.agent.id"] == "test-agent"
+    assert root.attributes["gen_ai.agent.version"] == "1.0.0"
     assert root.attributes["agent.description"] == "deterministic test agent"
     assert root.attributes["session.id"]
     assert root.attributes["environment"] == "production"
     assert root.attributes["agent.run.status"] == "completed"
     assert root.attributes["agent.run.model_calls"] == 1
+
+    assert {
+        span.attributes["agent.id"] for span in tracer.spans if "agent.id" in span.attributes
+    } == {"test-agent"}
+    assert {
+        span.attributes["agent.definition.id"]
+        for span in tracer.spans
+        if "agent.definition.id" in span.attributes
+    } == {"test-agent@1.0.0"}
 
     planning_span = next(span for span in tracer.spans if span.name == "agent.planning")
     assert planning_span.attributes["agent.planner.name"] == "react"
@@ -271,10 +348,15 @@ async def test_runtime_emits_one_root_trace_with_traccia_semantics() -> None:
     )
     assert model_span_parent == "agent.step"
 
-    policy_span = next(
-        span for span in tracer.spans if span.name == "agent.policy.evaluate"
-    )
-    assert policy_span.attributes["guardrail.source_sdk"] == "traccia_runtime"
+    policy_span = next(span for span in tracer.spans if span.name == "agent.policy.input")
+    assert "guardrail.name" not in policy_span.attributes
+    assert policy_span.attributes["span.type"] == "policy_pipeline"
+    assert policy_span.attributes["policy.operation"] == "agent.policy.evaluate"
+    assert policy_span.attributes["policy.boundary"] == "input"
+    assert policy_span.attributes["policy.subject_type"] == "str"
+    assert policy_span.attributes["policy.invoked_count"] >= 1
+    assert policy_span.attributes["policy.triggered_count"] == 0
+    assert policy_span.attributes["policy.source_sdk"] == "traccia_runtime"
     assert policy_span.attributes["policy.action"] == "allow"
 
     model_span = next(span for span in tracer.spans if span.name == "agent.model.call")

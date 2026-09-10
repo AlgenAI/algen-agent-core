@@ -30,19 +30,20 @@ from examples.talk_to_data_multi_agent.application.catalog import (
     SchemaCatalog,
     load_schema_catalog,
 )
-from examples.talk_to_data_multi_agent.application.query_executor import (
-    ReadOnlyPostgresExecutor,
-    chart_for,
+from examples.talk_to_data_multi_agent.application.query_executor import ReadOnlyPostgresExecutor
+from examples.talk_to_data_multi_agent.application.visualizations import (
+    AirlineVisualizationPlanner,
 )
 from examples.talk_to_data_multi_agent.application.workflow import WorkflowError
 from traccia_runtime.api.app import create_app
 from traccia_runtime.config.settings import load_settings
 from traccia_runtime.conversations import (
-    ChartBlock,
     CodeBlock,
     Conversation,
     ConversationMessage,
+    ConversationPresentation,
     ConversationTurnResult,
+    DetailsBlock,
     NoticeBlock,
     TableBlock,
 )
@@ -52,6 +53,50 @@ from traccia_runtime.semantics import AnalysisStatus, SemanticLayer
 from traccia_runtime.types.contracts import Role, TextBlock
 
 SuggestionProvider = Callable[[str, str, int], Awaitable[Sequence[str]]]
+
+_BUSINESS_PROGRESS: dict[str, tuple[str, str]] = {
+    "understand": (
+        "Understanding your question",
+        "Working out the business measures and comparison you need.",
+    ),
+    "clarification": (
+        "A quick clarification",
+        "One detail is needed to make sure the answer matches your intent.",
+    ),
+    "plan": (
+        "Preparing the analysis",
+        "Choosing the most relevant information and a reliable way to answer.",
+    ),
+    "generate_sql": (
+        "Gathering the right data",
+        "Preparing a safe, focused request for the information needed.",
+    ),
+    "execute": (
+        "Checking the numbers",
+        "Retrieving the relevant figures for your question.",
+    ),
+    "analyze": (
+        "Analyzing the results",
+        "Comparing the figures and identifying the most useful findings.",
+    ),
+    "compose": (
+        "Preparing your answer",
+        "Turning the findings into a concise business explanation.",
+    ),
+    "verify": (
+        "Checking the answer",
+        "Making sure the conclusions match the available evidence.",
+    ),
+    "complete": ("Answer ready", "The analysis has finished."),
+}
+
+
+def _business_progress(developer: dict[str, Any]) -> dict[str, Any]:
+    result = dict(developer)
+    copy = _BUSINESS_PROGRESS.get(str(developer.get("step")))
+    if copy is not None:
+        result["label"], result["description"] = copy
+    return result
 
 
 class TalkToDataConversationHandler:
@@ -68,16 +113,26 @@ class TalkToDataConversationHandler:
         suggestion_provider: SuggestionProvider | None = None,
         show_response_time: bool = False,
         show_progress: bool = False,
+        show_charts: bool = True,
+        presentation: ConversationPresentation | None = None,
     ) -> None:
         self._container = container
         self._catalog = catalog
         self._semantic_layer = semantic_layer
         self._analytics_tools = analytics_tools
+        self._visualizations = AirlineVisualizationPlanner()
         self._executor = executor
         self._max_clarifications = max_clarifications
         self._suggestion_provider = suggestion_provider
         self._show_response_time = show_response_time
         self._show_progress = show_progress
+        self._show_charts = show_charts
+        conversation_service = getattr(container, "conversations", None)
+        self._presentation = (
+            presentation
+            or getattr(conversation_service, "presentation", None)
+            or ConversationPresentation()
+        )
 
     async def suggestions(self, tenant_id: str, user_id: str, limit: int) -> tuple[str, ...]:
         if self._suggestion_provider is not None:
@@ -120,6 +175,10 @@ class TalkToDataConversationHandler:
                 )
                 if key in payload
             }
+            safe_step = self._presentation.progress(
+                _business_progress(safe_step),
+                safe_step,
+            )
             for previous in execution_steps:
                 if previous.get("status") == "started":
                     previous["status"] = "completed"
@@ -177,12 +236,24 @@ class TalkToDataConversationHandler:
                 emit=observed_emit,
             )
         except WorkflowError as exc:
+            display_error = self._presentation.error_message(
+                exc,
+                business_message=(
+                    "I couldn't complete this analysis because the data request could not be "
+                    "validated safely. Please try rephrasing or narrowing the question."
+                ),
+            )
             await observed_emit(
                 "workflow.blocked",
-                {"reason": str(exc)[:500], "retryable": exc.retryable},
+                {"reason": display_error, "retryable": exc.retryable},
             )
             return ConversationTurnResult(
-                content=(NoticeBlock(level="error", text=str(exc)[:500]),),
+                content=(
+                    NoticeBlock(
+                        level="error",
+                        text=display_error,
+                    ),
+                ),
                 run_ids=exc.run_ids,
                 outcome="failed",
                 metadata=with_execution_metadata(
@@ -220,8 +291,16 @@ class TalkToDataConversationHandler:
                 ),
             )
         if turn.status == AdvancedTurnStatus.BLOCKED:
+            display_message = self._presentation.error_message(
+                RuntimeError(turn.message),
+                business_message=(
+                    "I couldn't complete this analysis with the available governed data. "
+                    "Try narrowing the question or ask your data administrator to review data "
+                    "availability."
+                ),
+            )
             return ConversationTurnResult(
-                content=(NoticeBlock(level="warning", text=turn.message),),
+                content=(NoticeBlock(level="warning", text=display_message),),
                 run_ids=turn.run_ids,
                 outcome="blocked",
                 metadata=with_execution_metadata(
@@ -238,6 +317,7 @@ class TalkToDataConversationHandler:
             )
 
         blocks: list[Any] = [TextBlock(text=turn.message)]
+        technical_blocks: list[CodeBlock | TableBlock] = []
         source_ids: list[str] = []
         for query in turn.queries:
             await observed_emit(
@@ -245,7 +325,7 @@ class TalkToDataConversationHandler:
                 {"task_id": query.task_id, "source_ids": query.generation.source_ids},
             )
             source_ids.extend(query.generation.source_ids)
-            blocks.append(
+            technical_blocks.append(
                 CodeBlock(
                     language="sql",
                     code=query.generation.sql,
@@ -258,17 +338,22 @@ class TalkToDataConversationHandler:
                 blocks.append(NoticeBlock(level="info", text=finding))
             for recommendation in turn.report.recommendations:
                 blocks.append(NoticeBlock(level="info", text="Next action: " + recommendation))
-        for query_result in turn.query_results:
-            blocks.append(
+        planned_tasks = turn.plan.queries[: len(turn.query_results)] if turn.plan else ()
+        for task, query_result in zip(planned_tasks, turn.query_results, strict=True):
+            chart = (
+                self._visualizations.plan(task, query_result, turn.analysis)
+                if self._show_charts
+                else None
+            )
+            if chart is not None:
+                blocks.append(chart)
+            technical_blocks.append(
                 TableBlock(
                     columns=query_result.columns,
                     rows=query_result.rows,
                     truncated=query_result.truncated,
                 )
             )
-            chart = chart_for(query_result)
-            if chart:
-                blocks.append(ChartBlock(specification=chart))
         if turn.analysis:
             for warning in turn.analysis.warnings:
                 blocks.append(NoticeBlock(level="warning", text=warning))
@@ -282,6 +367,15 @@ class TalkToDataConversationHandler:
                 NoticeBlock(
                     level="info",
                     text="Query execution is disabled; configure TALK_TO_DATA_QUERY_DSN to run the analytical plan.",
+                )
+            )
+        if self._presentation.show_technical_details and technical_blocks:
+            blocks.append(
+                DetailsBlock(
+                    title="Technical details",
+                    description="SQL and raw query results used to support this answer.",
+                    expanded=self._presentation.technical_details_expanded,
+                    content=tuple(technical_blocks),
                 )
             )
         metadata: dict[str, Any] = {
@@ -379,6 +473,7 @@ def build_dashboard_app(
             executor,
             show_response_time=settings.feature_flags.get("talk_to_data_show_response_time", False),
             show_progress=settings.feature_flags.get("talk_to_data_show_progress", False),
+            show_charts=settings.feature_flags.get("talk_to_data_show_charts", True),
         )
     )
     app = create_app(settings, container)
@@ -411,6 +506,14 @@ def build_dashboard_app(
     async def detailed_v2_architecture() -> FileResponse:
         return FileResponse(
             ARCHITECTURE_V2_DIR / "detailed.html",
+            media_type="text/html",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/architecture/v2/detailed-new", include_in_schema=False)
+    async def layered_detailed_v2_architecture() -> FileResponse:
+        return FileResponse(
+            ARCHITECTURE_V2_DIR / "detailed_new.html",
             media_type="text/html",
             headers={"Cache-Control": "no-store"},
         )

@@ -6,8 +6,9 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal, Protocol
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from traccia_runtime.conversations.visualization import validate_vega_lite_specification
 from traccia_runtime.types.contracts import FileBlock, ImageBlock, Role, TextBlock, utc_now
 
 
@@ -32,6 +33,13 @@ class ChartBlock(BaseModel):
     type: Literal["chart"] = "chart"
     specification: dict[str, Any]
     grammar: Literal["vega-lite"] = "vega-lite"
+    title: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=1_000)
+
+    @field_validator("specification")
+    @classmethod
+    def validate_specification(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return validate_vega_lite_specification(value)
 
 
 class NoticeBlock(BaseModel):
@@ -41,8 +49,24 @@ class NoticeBlock(BaseModel):
     text: str
 
 
+class DetailsBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["details"] = "details"
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=1_000)
+    expanded: bool = False
+    content: tuple[TextBlock | CodeBlock | TableBlock | NoticeBlock, ...]
+
+
 ConversationContentBlock = Annotated[
-    TextBlock | ImageBlock | FileBlock | CodeBlock | TableBlock | ChartBlock | NoticeBlock,
+    TextBlock
+    | ImageBlock
+    | FileBlock
+    | CodeBlock
+    | TableBlock
+    | ChartBlock
+    | NoticeBlock
+    | DetailsBlock,
     Field(discriminator="type"),
 ]
 

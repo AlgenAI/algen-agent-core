@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
+from hashlib import sha256
 from typing import Any
 
 import httpx
@@ -108,6 +110,8 @@ class OpenAICompatibleProvider:
         self._client = client or httpx.AsyncClient()
         self._headers = headers or {}
         self._endpoint = endpoint
+        self._wire_tool_names: dict[str, str] = {}
+        self._runtime_tool_names: dict[str, str] = {}
 
     @property
     def provider_id(self) -> str:
@@ -121,6 +125,33 @@ class OpenAICompatibleProvider:
         if self._key_reference:
             headers["Authorization"] = f"Bearer {await self._secrets.get(self._key_reference)}"
         return headers
+
+    def _wire_tool_name(self, name: str) -> str:
+        """Map namespaced Runtime names to the common provider wire format.
+
+        Runtime tool names intentionally support namespaces such as
+        ``teaching.build_study_plan``. OpenAI-compatible APIs generally limit
+        function names to 64 ASCII letters, digits, underscores, and hyphens.
+        The hash suffix prevents collisions while the instance maps responses
+        back to the stable Runtime name.
+        """
+        if cached := self._wire_tool_names.get(name):
+            return cached
+        if len(name) <= 64 and re.fullmatch(r"[A-Za-z0-9_-]+", name):
+            alias = name
+        else:
+            stem = re.sub(r"[^A-Za-z0-9_-]", "_", name).strip("_-") or "tool"
+            digest = sha256(name.encode("utf-8")).hexdigest()[:12]
+            alias = f"{stem[:51]}_{digest}"
+        existing = self._runtime_tool_names.get(alias)
+        if existing is not None and existing != name:
+            raise ValueError("tool name alias collision")
+        self._wire_tool_names[name] = alias
+        self._runtime_tool_names[alias] = name
+        return alias
+
+    def _runtime_tool_name(self, name: str) -> str:
+        return self._runtime_tool_names.get(name, name)
 
     def _payload(self, request: ModelRequest) -> dict[str, Any]:
         messages = []
@@ -137,7 +168,11 @@ class OpenAICompatibleProvider:
                 content = blocks
             item: dict[str, Any] = {"role": message.role.value, "content": content}
             if message.name:
-                item["name"] = message.name
+                item["name"] = (
+                    self._wire_tool_name(message.name)
+                    if message.role == Role.TOOL
+                    else message.name
+                )
             if message.tool_call_id:
                 item["tool_call_id"] = message.tool_call_id
             if message.tool_calls:
@@ -146,7 +181,7 @@ class OpenAICompatibleProvider:
                         "id": call.id,
                         "type": "function",
                         "function": {
-                            "name": call.name,
+                            "name": self._wire_tool_name(call.name),
                             "arguments": json.dumps(call.arguments),
                         },
                     }
@@ -167,7 +202,7 @@ class OpenAICompatibleProvider:
                 {
                     "type": "function",
                     "function": {
-                        "name": tool.name,
+                        "name": self._wire_tool_name(tool.name),
                         "description": tool.description,
                         "parameters": tool.input_schema,
                     },
@@ -189,7 +224,7 @@ class OpenAICompatibleProvider:
             calls = tuple(
                 ToolCall(
                     id=item.get("id") or f"call-{index}",
-                    name=item["function"]["name"],
+                    name=self._runtime_tool_name(item["function"]["name"]),
                     arguments=_tool_arguments(item["function"].get("arguments")),
                 )
                 for index, item in enumerate(message.get("tool_calls") or ())
@@ -317,7 +352,7 @@ class OpenAICompatibleProvider:
         calls = tuple(
             ToolCall(
                 id=item["id"] or f"call-{index}",
-                name=item["name"],
+                name=self._runtime_tool_name(item["name"]),
                 arguments=_tool_arguments(item["arguments"]),
             )
             for index, item in sorted(tool_parts.items())

@@ -32,6 +32,7 @@ from traccia_runtime.observability.traccia_adapter import (
 from traccia_runtime.planning.contracts import ActionType, PlannedAction
 from traccia_runtime.planning.planners import PlannerRegistry
 from traccia_runtime.policies.contracts import PolicyAction, PolicyDecision
+from traccia_runtime.policies.instrumentation import evaluate_policy_observed
 from traccia_runtime.responses.composer import ResponseComposerRegistry
 from traccia_runtime.runtime.state_machine import validate_transition
 from traccia_runtime.security.redaction import redact
@@ -255,19 +256,23 @@ class AgentRuntime:
         state = await self._require_state(run_id, tenant_id)
         agent = self.agents.get(state.request.agent, state.request.agent_version)
         with self.observability.run_scope(
-            agent_id=agent.key,
+            agent_id=agent.logical_id,
             agent_name=agent.name,
             tenant_id=state.request.tenant_id,
         ):
-            with self._tracer.start_as_current_span(
+            attributes = {
+                **self._span_attributes(state),
+                "span.type": "agent",
+                "agent.span.type": "agent",
+                "gen_ai.operation.name": "invoke_agent",
+            }
+            span_scope = self.observability.span_scope(
+                "agent.run", attributes=attributes
+            ) or self._tracer.start_as_current_span(
                 "agent.run",
-                attributes={
-                    **self._span_attributes(state),
-                    "span.type": "agent",
-                    "agent.span.type": "agent",
-                    "gen_ai.operation.name": "invoke_agent",
-                },
-            ) as span:
+                attributes=attributes,
+            )
+            with span_scope as span:
                 await self._drive_observed(run_id, tenant_id, state, agent)
                 current = await self._require_state(run_id, tenant_id)
                 span.set_attribute("agent.run.status", current.status.value)
@@ -327,16 +332,11 @@ class AgentRuntime:
     async def _execute(self, state: RunState, agent: AgentDefinition) -> None:
         if state.status == RunStatus.RECEIVED:
             await self._transition(state, RunStatus.VALIDATING)
-            decision = await self._evaluate_policy(
-                "input",
-                state.request.input,
-                state,
-                {"tenant_id": state.request.tenant_id, "agent": agent},
+            checked_input = await self._policy_value(
+                "input", state.request.input, state, {"agent": agent}
             )
-            if decision.action == PolicyAction.DENY:
-                raise PolicyDeniedError(decision.reason)
-            if decision.action in {PolicyAction.TRANSFORM, PolicyAction.REDACT}:
-                state.messages = [Message.text(Role.USER, str(decision.value))]
+            if isinstance(checked_input, str) and checked_input != state.request.input:
+                state.request = state.request.model_copy(update={"input": checked_input})
             await self._transition(state, RunStatus.BUILDING_CONTEXT)
         while state.status not in TERMINAL_STATUSES and state.status not in {
             RunStatus.AWAITING_APPROVAL,
@@ -522,7 +522,10 @@ class AgentRuntime:
                     self._telemetry_content(response.message.model_dump(mode="json")),
                 )
         checked_output = await self._policy_value(
-            "after_model", response.message.text_content, state, {"agent": agent}
+            "after_model",
+            response.message.text_content,
+            state,
+            {"agent": agent, "tool_calls": response.tool_calls},
         )
         if checked_output != response.message.text_content:
             response = response.model_copy(
@@ -659,6 +662,30 @@ class AgentRuntime:
                 last_error = exc
                 if not exc.retryable or attempt + 1 >= agent.retry_policy.max_attempts:
                     break
+                # Rejected completions are already charged; respect deterministic run ceilings.
+                self._enforce_budget(state, agent)
+                if exc.error_kind == ErrorKind.INVALID_RESPONSE and "output-token limit" in str(
+                    exc
+                ):
+                    current_limit = request.max_output_tokens or agent.budget.max_output_tokens
+                    remaining_tokens = max(
+                        1, agent.budget.max_tokens - state.summary.usage.total_tokens
+                    )
+                    next_limit = min(max(current_limit + 256, current_limit * 2), remaining_tokens)
+                    if next_limit <= current_limit:
+                        break
+                    request = request.model_copy(update={"max_output_tokens": next_limit})
+                    await self._audit(
+                        state,
+                        "model.output_limit_recovery",
+                        "retrying",
+                        f"{profiles[0].provider}/{profiles[0].model}",
+                        {
+                            "step_id": step_id,
+                            "previous_output_limit": current_limit,
+                            "next_output_limit": next_limit,
+                        },
+                    )
                 state.summary = state.summary.model_copy(
                     update={"retries": state.summary.retries + 1}
                 )
@@ -703,6 +730,15 @@ class AgentRuntime:
                 "usage": self._add_usage(state.summary.usage, response.usage),
             }
         )
+
+    @staticmethod
+    def _enforce_budget(state: RunState, agent: AgentDefinition) -> None:
+        """Enforce local termination ceilings; platform governance remains external."""
+        usage = state.summary.usage
+        if usage.total_tokens >= agent.budget.max_tokens:
+            raise BudgetExceededError("token budget exhausted")
+        if usage.estimated_cost_usd >= agent.budget.max_cost_usd:
+            raise BudgetExceededError("cost budget exhausted")
 
     async def _execute_tool(
         self, state: RunState, agent: AgentDefinition, action: PlannedAction
@@ -756,7 +792,7 @@ class AgentRuntime:
         with self._tracer.start_as_current_span(
             "agent.tool.call", attributes=self._span_attributes(state, action.id)
         ) as span:
-            span.set_attribute("span.type", "TOOL")
+            span.set_attribute("span.type", "tool")
             span.set_attribute("tool.name", tool.definition.name)
             span.set_attribute("tool.version", tool.definition.version)
             span.set_attribute("tool.side_effect", tool.definition.side_effect.value)
@@ -891,13 +927,6 @@ class AgentRuntime:
         await self._transition(state, RunStatus.COMPLETED)
         await self._emit(state, "run.completed", {"outcome": "completed"}, step_id)
 
-    def _enforce_budget(self, state: RunState, agent: AgentDefinition) -> None:
-        usage = state.summary.usage
-        if usage.total_tokens >= agent.budget.max_tokens:
-            raise BudgetExceededError("token budget exhausted")
-        if usage.estimated_cost_usd >= agent.budget.max_cost_usd:
-            raise BudgetExceededError("cost budget exhausted")
-
     async def _transition(self, state: RunState, target: RunStatus) -> None:
         validate_transition(state.status, target)
         expected = state.version
@@ -979,29 +1008,21 @@ class AgentRuntime:
         state: RunState,
         context: Mapping[str, Any],
     ) -> PolicyDecision:
-        with self._tracer.start_as_current_span(
-            "agent.policy.evaluate", attributes=self._span_attributes(state)
-        ) as span:
-            span.set_attribute("guardrail.name", point)
-            span.set_attribute("guardrail.source_sdk", "traccia_runtime")
-            span.set_attribute("governance.event_type", "policy_decision")
-            decision = PolicyDecision.model_validate(
-                await self.policies.evaluate(
-                    point,
-                    payload,
-                    {
-                        **context,
-                        "run_id": state.id,
-                        "tenant_id": state.request.tenant_id,
-                        "user_id": state.request.user_id,
-                    },
-                )
-            )
-            span.set_attribute("policy.action", decision.action.value)
-            span.set_attribute("policy.reason_code", decision.reason_code)
-            span.set_attribute("guardrail.triggered", decision.action != PolicyAction.ALLOW)
-            span.set_attribute("guardrail.enforcement_mode", decision.action.value)
-            return decision
+        return await evaluate_policy_observed(
+            tracer=self._tracer,
+            engine=self.policies,
+            point=point,
+            payload=payload,
+            context={
+                **context,
+                "run_id": state.id,
+                "tenant_id": state.request.tenant_id,
+                "user_id": state.request.user_id,
+                "usage": state.summary.usage,
+                "step_count": state.step_count,
+            },
+            attributes=self._span_attributes(state),
+        )
 
     async def _audit(
         self,
@@ -1024,11 +1045,12 @@ class AgentRuntime:
 
     def _span_attributes(self, state: RunState, step_id: str | None = None) -> dict[str, str]:
         agent = self.agents.get(state.request.agent, state.request.agent_version)
-        agent_id = state.agent_key or state.request.agent
-        agent_name = state.request.agent
+        agent_id = agent.logical_id
+        agent_name = agent.name
         attributes = {
             "agent.id": agent_id,
             "agent.name": agent_name,
+            "agent.definition.id": agent.key,
             "agent.run.id": state.id,
             "agent.session.id": state.session_id,
             "agent.tenant.id": state.request.tenant_id,
@@ -1039,6 +1061,7 @@ class AgentRuntime:
             "user.id": state.request.user_id,
             "gen_ai.agent.id": agent_id,
             "gen_ai.agent.name": agent_name,
+            "gen_ai.agent.version": agent.version,
             "gen_ai.conversation.id": state.session_id,
             "agent.type": agent.metadata.get("type", "workflow" if agent.workflow else "agent"),
             "agent.version": agent.version,

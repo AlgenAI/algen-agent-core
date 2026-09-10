@@ -162,6 +162,11 @@ class QueryExecutor(Protocol):
 
 Structured = TypeVar("Structured", bound=BaseModel)
 
+_RANKING_TERMS = re.compile(r"\b(lowest|highest|top|bottom|rank|ranking)\b", re.IGNORECASE)
+_NUMERIC_LIMIT = re.compile(r"\blimit\s+(\d+)\b", re.IGNORECASE)
+_MAX_RANKING_ROWS = 100
+_DEFAULT_RANKING_ROWS = 10
+
 
 class AnalyticsWorkflow:
     """Bounded multi-agent analytics pipeline with deterministic analytical tools."""
@@ -548,6 +553,30 @@ class AnalyticsWorkflow:
                 correlation_id=correlation,
             )
 
+        if analysis.kind == AnalysisKind.STATIC_SCENARIO:
+            await _emit_progress(
+                emit,
+                workflow_started,
+                step="complete",
+                label="Deterministic scenario ready",
+                description=(
+                    "The governed arithmetic result is ready without model-generated narration."
+                ),
+                index=6,
+                status="completed",
+            )
+            return AdvancedTurnResult(
+                status=AdvancedTurnStatus.COMPLETED,
+                message=analysis.summary,
+                intent=intent,
+                plan=plan,
+                queries=generated,
+                query_results=results,
+                analysis=analysis,
+                run_ids=tuple(runs),
+                correlation_id=correlation,
+            )
+
         await _emit_progress(
             emit,
             workflow_started,
@@ -718,6 +747,18 @@ class AnalyticsWorkflow:
         )
         if input_task_id and not selected_tasks:
             return f"analysis input_task_id {input_task_id!r} does not match a query task"
+        if plan.analysis_tool == "static_fare_scenario":
+            value_column = parameters.get("value_column")
+            if value_column != "ticket_revenue":
+                return (
+                    "static_fare_scenario value_column must be 'ticket_revenue'; "
+                    "average_fare is a per-passenger value and cannot produce portfolio impact"
+                )
+            if any("ticket_revenue" not in task.metrics for task in selected_tasks):
+                return (
+                    "static_fare_scenario requires the governed ticket_revenue metric "
+                    "in its analysis input query"
+                )
         expected_columns = {column for task in selected_tasks for column in task.expected_columns}
         for name, value in parameters.items():
             if name.endswith("_column") and str(value) not in expected_columns:
@@ -848,7 +889,10 @@ class AnalyticsWorkflow:
                     "repair_instruction": (
                         "Return corrected SQL whose projected aliases exactly include every "
                         "task.expected_columns value. The analytical tool, not SQL, owns "
-                        "scenario arithmetic unless the task explicitly requests otherwise."
+                        "scenario arithmetic unless the task explicitly requests otherwise. "
+                        "Apply validation_error literally. Ranking SQL must include an explicit "
+                        "ORDER BY in the requested direction and a numeric LIMIT from 1 through "
+                        "100; use LIMIT 10 when the user did not request a result count."
                     ),
                 }
             generation, run = await self._call(
@@ -863,6 +907,11 @@ class AnalyticsWorkflow:
             query_runs.append(run)
             try:
                 sql = validate_read_only_sql(generation.sql, self._catalog.tables)
+                sql = _normalize_ranking_limit(
+                    sql,
+                    intent.interpreted_request,
+                    task.purpose,
+                )
                 validate_parameters(sql, generation.parameters)
                 self._semantic_layer.validate_generated_sql(task.metrics, task.dimensions, sql)
                 _validate_projected_aliases(sql, task.expected_columns)
@@ -992,16 +1041,64 @@ def _validate_projected_aliases(sql: str, expected_columns: Sequence[str]) -> No
 
 def _validate_ranking_sql(sql: str, request: str, purpose: str) -> None:
     ranking_language = (request + " " + purpose).lower()
-    if not re.search(r"\b(lowest|highest|top|bottom|rank|ranking)\b", ranking_language):
+    if not _RANKING_TERMS.search(ranking_language):
         return
     normalized = sql.lower()
     if not re.search(r"\border\s+by\b", normalized):
         raise WorkflowError("ranking SQL must include an explicit ORDER BY clause")
-    limit_match = re.search(r"\blimit\s+(\d+)\b", normalized)
+    limit_matches = tuple(_NUMERIC_LIMIT.finditer(normalized))
+    limit_match = limit_matches[-1] if limit_matches else None
     if limit_match is None:
         raise WorkflowError("ranking SQL must include an explicit numeric LIMIT")
-    if int(limit_match.group(1)) > 100:
-        raise WorkflowError("ranking SQL LIMIT cannot exceed 100 rows")
+    limit = int(limit_match.group(1))
+    if limit < 1 or limit > _MAX_RANKING_ROWS:
+        raise WorkflowError(f"ranking SQL LIMIT must be between 1 and {_MAX_RANKING_ROWS} rows")
+
+
+def _normalize_ranking_limit(sql: str, request: str, purpose: str) -> str:
+    """Apply a deterministic display bound to otherwise valid ranking SQL.
+
+    A model-selected executor ceiling (for example LIMIT 500) is not user intent. For an
+    unqualified ranking request we use a concise default, avoiding an unnecessary model repair.
+    An explicit count in the user's request remains authoritative and is left for the contract
+    validator to reject if it exceeds the safety ceiling.
+    """
+    ranking_language = f"{request} {purpose}"
+    if not _RANKING_TERMS.search(ranking_language):
+        return sql
+    if not re.search(r"\border\s+by\b", sql, flags=re.IGNORECASE):
+        return sql
+
+    requested_limit = _requested_ranking_limit(request)
+    desired_limit = requested_limit if requested_limit is not None else _DEFAULT_RANKING_ROWS
+    limit_matches = tuple(_NUMERIC_LIMIT.finditer(sql))
+    if limit_matches:
+        match = limit_matches[-1]
+        generated_limit = int(match.group(1))
+        if requested_limit is None and 1 <= generated_limit <= _MAX_RANKING_ROWS:
+            return sql
+        if generated_limit == desired_limit:
+            return sql
+        start, end = match.span(1)
+        return f"{sql[:start]}{desired_limit}{sql[end:]}"
+
+    statement = sql.rstrip()
+    terminator = ";" if statement.endswith(";") else ""
+    if terminator:
+        statement = statement[:-1].rstrip()
+    return f"{statement} LIMIT {desired_limit}{terminator}"
+
+
+def _requested_ranking_limit(request: str) -> int | None:
+    patterns = (
+        r"\b(?:top|bottom|lowest|highest)\s+(\d+)\b",
+        r"\b(\d+)\s+(?:lowest|highest|top|bottom)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, request, flags=re.IGNORECASE)
+        if match is not None:
+            return int(match.group(1))
+    return None
 
 
 async def _emit_progress(

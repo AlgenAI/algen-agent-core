@@ -47,6 +47,7 @@ talk_to_data_multi_agent/
 │       └── v2/                       # Target architecture for the customer catalogue
 │           ├── detailed.html
 │           ├── detailed_animated.html
+│           ├── detailed_new.html     # Layered, ownership-aware interactive view
 │           └── high_level.html
 └── ui/
     └── dashboard.html                # Self-contained ChatGPT-style test interface
@@ -91,6 +92,7 @@ V2 architecture based on the broader customer question catalogue and implemented
 
 - [High-level V2 architecture](docs/architecture/v2/high_level.html)
 - [Detailed V2 architecture](docs/architecture/v2/detailed.html)
+- [Layered interactive V2 architecture](docs/architecture/v2/detailed_new.html)
 - [Animated V2 question walkthrough](docs/architecture/v2/detailed_animated.html)
 - [Customer data and runtime requirements](docs/customer_data_and_runtime_requirements.md)
 
@@ -215,12 +217,19 @@ python -m examples.talk_to_data_multi_agent.dashboard
 
 Open [http://localhost:8090](http://localhost:8090).
 
-The example enables two presentation flags in `config/agent.yaml`:
+The example enables presentation features in `config/agent.yaml`:
 
 ```yaml
 feature_flags:
   talk_to_data_show_response_time: true
   talk_to_data_show_progress: true
+  talk_to_data_show_charts: true
+
+conversation_presentation:
+  progress_audience: business
+  error_audience: business
+  show_technical_details: false
+  technical_details_expanded: false
 ```
 
 `talk_to_data_show_response_time` stores and displays the end-to-end handler time on
@@ -229,6 +238,13 @@ summaries (understand, plan, generate SQL, execute, analyze, compose, and verify
 stores the completed list with the response so it remains available after refresh.
 Disable either flag independently. Progress descriptions are operational summaries;
 they do not contain model chain-of-thought, prompts, query results, or credentials.
+
+`conversation_presentation` is a reusable Traccia Runtime policy rather than a UI-only switch.
+Business mode uses outcome-oriented progress and safe errors. Developer mode exposes component-level
+progress and actionable validation errors. Technical SQL and raw tables are hidden by default; when
+`show_technical_details` is enabled, they are returned in a typed `details` block that this dashboard
+renders collapsed unless `technical_details_expanded` is explicitly enabled. Full diagnostics,
+traces, and audit evidence remain available to authorized operators regardless of presentation mode.
 
 Enable controlled execution with a different, read-only database identity:
 
@@ -248,6 +264,7 @@ Architecture pages are also served by the dashboard:
 - `http://localhost:8090/architecture/agents`
 - `http://localhost:8090/architecture/v2/high-level`
 - `http://localhost:8090/architecture/v2/detailed`
+- `http://localhost:8090/architecture/v2/detailed-new`
 - `http://localhost:8090/architecture/v2/animated`
 
 ## Conversation API
@@ -284,6 +301,25 @@ Responses contain typed blocks:
 | `table` | Sortable/export-controlled result grid |
 | `chart` | Vega-Lite visualization |
 
+### Interactive visualizations
+
+The example enables `talk_to_data_show_charts` by default. Its domain-owned
+`AirlineVisualizationPlanner` chooses a chart from the governed query task, result schema, and
+deterministic analysis outcome. It currently produces ranked flight-inventory bars,
+baseline-versus-scenario revenue comparisons, load-factor/yield scatter plots, time-series lines,
+and categorical comparisons. Charts are supplemental; enable `show_technical_details` to include the
+complete accessible result table in the collapsed technical disclosure.
+
+Traccia Runtime validates every `ChartBlock` as bounded inline Vega-Lite before persistence or API
+delivery. External data URLs, links, expression transforms, embed metadata, oversized payloads, and
+more than 1,000 inline rows are rejected. The example further limits rendered points to 50.
+
+The demonstration HTML loads Vega, Vega-Lite, and Vega-Embed from versioned jsDelivr URLs, renders
+responsive SVG with tooltips, and permits PNG/SVG export. If those browser dependencies cannot load,
+it falls back to a simple local bar rendering and the accessible table. Production dashboards should
+bundle these JavaScript dependencies into their own audited frontend build and Content Security
+Policy rather than depending on a public CDN.
+
 A clarification is an ordinary assistant message with `metadata.kind: clarification`. The next human message resumes the persisted workflow state.
 
 ## Critical configuration values
@@ -306,6 +342,7 @@ Review these values for every deployment or new domain example. Do not copy them
 | `config/agent.yaml` | CORS origins | Allow only actual dashboard origins. Never use unrestricted credentialed CORS. |
 | `config/agent.yaml` | Traccia project, environment, sampling and content flags | Use distinct project/environment identity. Decide whether conversation content may leave the process and configure redaction/retention accordingly. |
 | `config/agent.yaml` | Talk-to-data response time and progress flags | Enable only the UI detail the deployment should expose. Keep progress events limited to safe stage summaries; never emit private model reasoning. |
+| `config/agent.yaml` | `conversation_presentation` | Default to business audiences and hidden technical details. Enable developer errors, SQL, and raw tables only for authorized diagnostic deployments. |
 | `config/semantic_layer.yaml` | Name, version, owner and certification | Treat this as a governed business contract. Increment the version and rerun evaluations after changes. |
 | `config/semantic_layer.yaml` | Metric expressions, grains, joins and units | Obtain data-owner approval. Validate fan-out, nulls, currency, dates, cancellations, snapshots and non-additive measures. |
 | `config/semantic_layer.yaml` | `default_filters` and `required_filter_dimensions` | Use default filters for immutable source rules such as current-version selection. Require explicit filters for point-in-time or high-volume historical sources. These rules are enforced, not merely prompt guidance. |
