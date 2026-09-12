@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 from pydantic import ValidationError
 
@@ -179,3 +181,26 @@ async def test_pgvector_adapter_parameterizes_tenant_and_filters() -> None:
 def test_pgvector_rejects_unsafe_table_identifier() -> None:
     with pytest.raises(ValueError, match="unsafe SQL identifier"):
         PgVectorRetriever("unused", HashingEmbedder(), dimensions=128, table="docs; DROP TABLE x")
+
+
+async def test_vector_store_batches_large_embedding_ingestion() -> None:
+    class RecordingEmbedder:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+            values = list(texts)
+            self.batch_sizes.append(len(values))
+            return [[0.0] * 8 for _ in values]
+
+    embedder = RecordingEmbedder()
+    retriever = ChromaRetriever(embedder, client=FakeChromaClient(), chunker=None)
+    documents = tuple(
+        SourceDocument(id=f"doc-{index}", text="evidence", source="test")
+        for index in range(260)
+    )
+
+    chunks, vectors = await retriever._chunks_and_vectors(documents)
+
+    assert len(chunks) == len(vectors) == 260
+    assert embedder.batch_sizes == [128, 128, 4]

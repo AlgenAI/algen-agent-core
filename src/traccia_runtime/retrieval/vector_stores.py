@@ -20,6 +20,8 @@ from traccia_runtime.retrieval.memory import Embedder
 
 _IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _QDRANT_NAMESPACE = UUID("92bb4d3e-e914-4c55-a5d7-09383ef1510d")
+_EMBED_BATCH_SIZE = 128
+_EMBED_BATCH_CHARACTERS = 200_000
 
 
 def _check_identifier(value: str) -> str:
@@ -88,7 +90,21 @@ class _VectorStoreBase:
         chunks = [chunk for document in documents for chunk in self._chunker.chunk(document)]
         if not chunks:
             return [], []
-        vectors = await self._embedder.embed([chunk.text for chunk in chunks])
+        vectors: list[list[float]] = []
+        batch: list[str] = []
+        characters = 0
+        for chunk in chunks:
+            if batch and (
+                len(batch) >= _EMBED_BATCH_SIZE
+                or characters + len(chunk.text) > _EMBED_BATCH_CHARACTERS
+            ):
+                vectors.extend(await self._embedder.embed(batch))
+                batch = []
+                characters = 0
+            batch.append(chunk.text)
+            characters += len(chunk.text)
+        if batch:
+            vectors.extend(await self._embedder.embed(batch))
         if len(chunks) != len(vectors):
             raise ValueError("embedder returned a different number of vectors than chunks")
         return chunks, vectors
