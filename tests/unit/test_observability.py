@@ -195,6 +195,27 @@ def test_traccia_adapter_reports_missing_optional_dependency(
         adapter.start()
 
 
+def test_traccia_adapter_bridges_legacy_span_processors() -> None:
+    endings: list[object] = []
+
+    class Downstream:
+        def _on_ending(self, span: object) -> None:
+            endings.append(span)
+
+    legacy = SimpleNamespace(next_processor=Downstream())
+    provider = SimpleNamespace(
+        _otel_tracer_provider=SimpleNamespace(
+            _active_span_processor=SimpleNamespace(_span_processors=(legacy,))
+        )
+    )
+
+    TracciaObservabilityAdapter._ensure_span_processor_compatibility(provider)
+    marker = object()
+    legacy._on_ending(marker)
+
+    assert endings == [marker]
+
+
 def test_traccia_adapter_requires_referenced_environment_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

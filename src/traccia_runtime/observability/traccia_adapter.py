@@ -5,7 +5,7 @@ import inspect
 import os
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from types import ModuleType
+from types import MethodType, ModuleType
 from typing import Any, Protocol, cast
 
 from opentelemetry import context as otel_context
@@ -162,9 +162,32 @@ class TracciaObservabilityAdapter:
                 )
             options["api_key"] = value
         provider = module.init(**options)
+        self._ensure_span_processor_compatibility(provider)
         self._register_otel_provider(provider)
         self._module = module
         self._started = True
+
+    @staticmethod
+    def _ensure_span_processor_compatibility(provider: Any) -> None:
+        """Bridge Traccia processors to OpenTelemetry's mutable-span hook.
+
+        OpenTelemetry 1.43 added ``SpanProcessor._on_ending`` before ``on_end``. Traccia 0.1.29
+        processors implement the older public lifecycle only. Adding a bounded compatibility hook
+        prevents otherwise valid agent runs from failing while retaining downstream processor hooks.
+        """
+        otel_provider = getattr(provider, "_otel_tracer_provider", None)
+        active = getattr(otel_provider, "_active_span_processor", None)
+        processors = getattr(active, "_span_processors", ())
+
+        def on_ending(processor: Any, span: Any) -> None:
+            downstream = getattr(processor, "next_processor", None)
+            callback = getattr(downstream, "_on_ending", None)
+            if callback is not None:
+                callback(span)
+
+        for processor in processors:
+            if not hasattr(processor, "_on_ending"):
+                processor._on_ending = MethodType(on_ending, processor)
 
     @staticmethod
     def _register_otel_provider(provider: Any) -> None:
