@@ -33,6 +33,11 @@ from traccia_runtime.context.builder import (
     RetrievalContextBuilder,
 )
 from traccia_runtime.conversations import ConversationPresentation, PresentationAudience
+from traccia_runtime.conversations.feedback import (
+    InMemoryConversationFeedbackStore,
+    PostgresConversationFeedbackStore,
+)
+from traccia_runtime.conversations.followups import ModelFollowupSuggestionProvider
 from traccia_runtime.conversations.service import (
     ConversationHandlerRegistry,
     ConversationService,
@@ -275,6 +280,7 @@ def build_container(settings: AppSettings) -> Container:
             for name, policy in settings.cache.policies.items()
         },
         key_secret=cache_secret,
+        telemetry_trace_level=settings.telemetry.trace_level,
     )
     analytical_node_registry = AnalyticalNodeRegistry()
     for kind, handler in builtin_handlers().items():
@@ -504,6 +510,7 @@ def build_container(settings: AppSettings) -> Container:
         cache=cache,
         telemetry_include_content=settings.telemetry.include_content,
         telemetry_max_content_chars=settings.telemetry.max_content_chars,
+        telemetry_trace_level=settings.telemetry.trace_level,
     )
     conversation_store = (
         PostgresConversationStore(database)
@@ -514,6 +521,22 @@ def build_container(settings: AppSettings) -> Container:
         PostgresConversationEventBus(database)
         if storage.conversation_store == "postgres"
         else InMemoryConversationEventBus()
+    )
+    conversation_feedback = (
+        PostgresConversationFeedbackStore(database)
+        if storage.conversation_store == "postgres"
+        else InMemoryConversationFeedbackStore()
+    )
+    followup_provider = (
+        ModelFollowupSuggestionProvider(
+            runtime,
+            agent=settings.conversation_followups.agent,
+            max_suggestions=settings.conversation_followups.max_suggestions,
+            history_messages=settings.conversation_followups.history_messages,
+            maximum_length=settings.conversation_followups.maximum_length,
+        )
+        if settings.conversation_followups.enabled
+        else None
     )
     presentation = ConversationPresentation(
         progress_audience=PresentationAudience(
@@ -534,6 +557,8 @@ def build_container(settings: AppSettings) -> Container:
         telemetry_include_content=settings.telemetry.include_conversation_content,
         telemetry_max_content_chars=settings.telemetry.max_content_chars,
         presentation=presentation,
+        feedback_store=conversation_feedback,
+        followup_provider=followup_provider,
     )
     return Container(
         runtime=runtime,

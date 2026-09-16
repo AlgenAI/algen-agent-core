@@ -3,14 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from opentelemetry.trace import Tracer
-
 from traccia_runtime.policies.contracts import PolicyAction, PolicyDecision, PolicyPoint
 
 
 async def evaluate_policy_observed(
     *,
-    tracer: Tracer,
+    tracer: Any,
     engine: Any,
     point: str | PolicyPoint,
     payload: Any,

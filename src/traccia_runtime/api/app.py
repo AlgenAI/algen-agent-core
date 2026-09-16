@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from traccia_runtime.api.dependencies import Principal, principal_dependency, require_scope
 from traccia_runtime.config.settings import AppSettings, load_settings
 from traccia_runtime.conversations.contracts import ConversationEvent, ConversationStatus
+from traccia_runtime.conversations.feedback import FeedbackRating
 from traccia_runtime.events.contracts import RunEvent
 from traccia_runtime.exceptions.errors import ConflictError, NotFoundError, TracciaRuntimeError
 from traccia_runtime.observability.setup import configure_logging, configure_telemetry
@@ -72,6 +73,14 @@ class UpdateConversationBody(BaseModel):
         return self
 
 
+class ConversationFeedbackBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rating: FeedbackRating
+    category: str | None = Field(default=None, max_length=100)
+    comment: str | None = Field(default=None, max_length=2_000)
+    tags: tuple[str, ...] = Field(default=(), max_length=20)
+
+
 def _sse(event: RunEvent) -> bytes:
     payload = event.model_dump_json()
     return f"id: {event.sequence}\nevent: {event.type}\ndata: {payload}\n\n".encode()
@@ -79,8 +88,7 @@ def _sse(event: RunEvent) -> bytes:
 
 def _conversation_sse(event: ConversationEvent) -> bytes:
     return (
-        f"id: {event.sequence}\nevent: {event.type}\n"
-        f"data: {event.model_dump_json()}\n\n"
+        f"id: {event.sequence}\nevent: {event.type}\ndata: {event.model_dump_json()}\n\n"
     ).encode()
 
 
@@ -130,15 +138,17 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
 
     @app.exception_handler(TracciaRuntimeError)
     async def core_error(request: Request, exc: TracciaRuntimeError) -> JSONResponse:
-        return JSONResponse(status_code=400, content={"detail": str(exc), "kind": exc.error_kind.value})
+        return JSONResponse(
+            status_code=400, content={"detail": str(exc), "kind": exc.error_kind.value}
+        )
 
     @app.post("/v1/runs", status_code=status.HTTP_202_ACCEPTED)
-    async def create_run(body: CreateRunBody, identity: Principal = identity_dependency) -> dict[str, Any]:
+    async def create_run(
+        body: CreateRunBody, identity: Principal = identity_dependency
+    ) -> dict[str, Any]:
         require_scope(identity, "runs:write")
         state = await dependencies.runtime.start(
-            RunRequest(
-                **body.model_dump(), tenant_id=identity.tenant_id, user_id=identity.user_id
-            )
+            RunRequest(**body.model_dump(), tenant_id=identity.tenant_id, user_id=identity.user_id)
         )
         return {"run_id": state.id, "session_id": state.session_id, "status": state.status}
 
@@ -190,7 +200,9 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
                 if event.type in {"run.completed", "run.failed", "run.cancelled"}:
                     return
 
-        return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+        return StreamingResponse(
+            generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+        )
 
     @app.get("/v1/artifacts/{artifact_id}")
     async def read_artifact(
@@ -200,7 +212,11 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
         artifact = await dependencies.artifacts.get(artifact_id, identity.tenant_id)
         if artifact is None:
             raise HTTPException(status_code=404, detail="artifact not found")
-        return Response(artifact.data, media_type=artifact.media_type, headers={"Content-Disposition": f'attachment; filename="{artifact.name}"'})
+        return Response(
+            artifact.data,
+            media_type=artifact.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{artifact.name}"'},
+        )
 
     @app.post("/v1/conversations", status_code=status.HTTP_201_CREATED)
     async def create_conversation(
@@ -245,9 +261,7 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
         conversation_id: str, identity: Principal = identity_dependency
     ) -> dict[str, Any]:
         require_scope(identity, "conversations:read")
-        conversation = await dependencies.conversations.get(
-            conversation_id, identity.tenant_id
-        )
+        conversation = await dependencies.conversations.get(conversation_id, identity.tenant_id)
         if conversation.user_id != identity.user_id:
             raise NotFoundError(f"conversation {conversation_id!r} not found")
         return conversation.model_dump(mode="json")
@@ -275,9 +289,7 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
         identity: Principal = identity_dependency,
     ) -> list[dict[str, Any]]:
         require_scope(identity, "conversations:read")
-        conversation = await dependencies.conversations.get(
-            conversation_id, identity.tenant_id
-        )
+        conversation = await dependencies.conversations.get(conversation_id, identity.tenant_id)
         if conversation.user_id != identity.user_id:
             raise NotFoundError(f"conversation {conversation_id!r} not found")
         items = await dependencies.conversations.messages(
@@ -313,13 +325,43 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
         conversation_id: str, identity: Principal = identity_dependency
     ) -> dict[str, str]:
         require_scope(identity, "conversations:write")
-        conversation = await dependencies.conversations.get(
-            conversation_id, identity.tenant_id
-        )
+        conversation = await dependencies.conversations.get(conversation_id, identity.tenant_id)
         if conversation.user_id != identity.user_id:
             raise NotFoundError(f"conversation {conversation_id!r} not found")
         await dependencies.conversations.cancel(conversation_id, identity.tenant_id)
         return {"status": "cancellation_requested"}
+
+    @app.put("/v1/conversations/{conversation_id}/messages/{message_id}/feedback")
+    async def put_conversation_feedback(
+        conversation_id: str,
+        message_id: str,
+        body: ConversationFeedbackBody,
+        identity: Principal = identity_dependency,
+    ) -> dict[str, Any]:
+        require_scope(identity, "feedback:write")
+        feedback = await dependencies.conversations.record_feedback(
+            conversation_id,
+            message_id,
+            identity.tenant_id,
+            identity.user_id,
+            body.rating,
+            category=body.category,
+            comment=body.comment,
+            tags=body.tags,
+        )
+        return feedback.model_dump(mode="json")
+
+    @app.get("/v1/conversations/{conversation_id}/messages/{message_id}/feedback")
+    async def get_conversation_feedback(
+        conversation_id: str,
+        message_id: str,
+        identity: Principal = identity_dependency,
+    ) -> dict[str, Any] | None:
+        require_scope(identity, "feedback:read")
+        feedback = await dependencies.conversations.feedback(
+            conversation_id, message_id, identity.tenant_id, identity.user_id
+        )
+        return feedback.model_dump(mode="json") if feedback else None
 
     @app.get("/v1/conversations/{conversation_id}/events")
     async def stream_conversation_events(
@@ -328,9 +370,7 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
         identity: Principal = identity_dependency,
     ) -> StreamingResponse:
         require_scope(identity, "conversations:read")
-        conversation = await dependencies.conversations.get(
-            conversation_id, identity.tenant_id
-        )
+        conversation = await dependencies.conversations.get(conversation_id, identity.tenant_id)
         if conversation.user_id != identity.user_id:
             raise NotFoundError(f"conversation {conversation_id!r} not found")
         last_id = int(request.headers.get("last-event-id", "0") or 0)
@@ -340,9 +380,7 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
             iterator = dependencies.conversations.events.subscribe(
                 conversation_id, after=last_id
             ).__aiter__()
-            pending: asyncio.Future[ConversationEvent] = asyncio.ensure_future(
-                iterator.__anext__()
-            )
+            pending: asyncio.Future[ConversationEvent] = asyncio.ensure_future(iterator.__anext__())
             try:
                 while True:
                     done, _ = await asyncio.wait((pending,), timeout=15)
@@ -394,8 +432,7 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
                 "model_count": len(layer.definition.models),
             }
             for layer in (
-                dependencies.semantics.get(name)
-                for name in dependencies.semantics.list()
+                dependencies.semantics.get(name) for name in dependencies.semantics.list()
             )
         ]
 
@@ -435,7 +472,9 @@ def create_app(settings: AppSettings | None = None, container: Container | None 
 def main() -> None:
     config_value = os.getenv("TRACCIA_RUNTIME_CONFIG", "")
     config_files = tuple(filter(None, config_value.split(os.pathsep)))
-    settings = load_settings(tuple(Path(item) for item in config_files)) if config_files else AppSettings()
+    settings = (
+        load_settings(tuple(Path(item) for item in config_files)) if config_files else AppSettings()
+    )
     uvicorn.run(create_app(settings), host=settings.api.host, port=settings.api.port)
 
 

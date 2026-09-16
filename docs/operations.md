@@ -139,6 +139,7 @@ Enable it in YAML:
 telemetry:
   enabled: true
   service_name: traccia-runtime
+  trace_level: detailed
   include_content: false
   include_conversation_content: false
   max_content_chars: 16384
@@ -210,6 +211,12 @@ The Traccia adapter registers the SDK's underlying OpenTelemetry provider as the
 To export the same spans to Traccia and another OTLP backend, also set `telemetry.otlp_endpoint`. Traccia Runtime attaches the standard OTLP processor to Traccia's OpenTelemetry provider. Leave it unset when Traccia is the only destination to prevent duplicate delivery.
 
 Automatic library patching defaults off because Traccia Runtime already traces normalized model and tool boundaries. Enable it only when deployment plugins make otherwise invisible SDK calls, and review content capture first. `telemetry.include_content` remains false by default. When explicitly enabled, Traccia Runtime emits redacted `llm.prompt`, `llm.completion`, normalized model messages, and tool input/output attributes, each bounded by `telemetry.max_content_chars`. `redact_pii` enables Traccia's additional best-effort processor; neither mechanism replaces upstream data-minimization policy.
+
+`telemetry.trace_level` controls runtime span volume. `minimal` keeps conversation, agent-run,
+LLM, tool, analytical, and triggered-guardrail spans; `standard` also keeps policy, context,
+verification, and memory spans; `detailed` additionally keeps planning, step, cache, and every
+guardrail evaluation span. The default is `detailed` for backward compatibility. This setting
+changes trace detail, while `sample_rate` independently controls how many complete traces are kept.
 
 Agent, planning, step, context, policy, model, tool, verification, and memory spans carry provider-neutral operational metadata. LLM spans include latency, finish reason, response ID, token-source fields, and configured-rate cost estimates. Pricing and billing fields owned by the Traccia ingestion service are not forged by Traccia Runtime.
 

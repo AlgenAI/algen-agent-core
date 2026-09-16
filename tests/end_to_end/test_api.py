@@ -140,6 +140,49 @@ async def test_conversation_api_supports_dashboard_message_flow() -> None:
         assert messages.json()[-1]["run_ids"]
 
 
+async def test_conversation_api_records_and_updates_feedback() -> None:
+    container = make_container()
+    transport = httpx.ASGITransport(app=create_app(AppSettings(), container))
+    headers = {"x-tenant-id": "tenant", "x-user-id": "user"}
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/v1/conversations", headers=headers, json={"agent": "test-agent"}
+        )
+        conversation_id = created.json()["id"]
+        accepted = await client.post(
+            f"/v1/conversations/{conversation_id}/messages",
+            headers=headers,
+            json={"text": "hello"},
+        )
+        message_id = accepted.json()["assistant_message_id"]
+        for _ in range(100):
+            messages = await client.get(
+                f"/v1/conversations/{conversation_id}/messages", headers=headers
+            )
+            if messages.json()[-1]["status"] == "completed":
+                break
+            await asyncio.sleep(0.001)
+
+        saved = await client.put(
+            f"/v1/conversations/{conversation_id}/messages/{message_id}/feedback",
+            headers=headers,
+            json={"rating": "up", "tags": ["helpful"]},
+        )
+        updated = await client.put(
+            f"/v1/conversations/{conversation_id}/messages/{message_id}/feedback",
+            headers=headers,
+            json={"rating": "down", "category": "incorrect"},
+        )
+        fetched = await client.get(
+            f"/v1/conversations/{conversation_id}/messages/{message_id}/feedback",
+            headers=headers,
+        )
+
+    assert saved.status_code == 200
+    assert updated.json()["id"] == saved.json()["id"]
+    assert fetched.json()["rating"] == "down"
+
+
 async def test_api_exposes_registered_semantic_layers() -> None:
     container = make_container()
     container.semantics.register(

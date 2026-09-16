@@ -12,10 +12,22 @@ from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.trace import Status, StatusCode
+from opentelemetry.trace import INVALID_SPAN_CONTEXT, NonRecordingSpan, Status, StatusCode
 
 from traccia_runtime.config.settings import TelemetrySettings, TracciaSettings
 from traccia_runtime.exceptions.errors import ConfigurationError
+from traccia_runtime.observability.trace_levels import TraceLevel
+
+
+class _DeferredGuardrailSpan(NonRecordingSpan):
+    """Collect guardrail attributes so compact traces can retain only triggers."""
+
+    def __init__(self) -> None:
+        super().__init__(INVALID_SPAN_CONTEXT)
+        self.attributes: dict[str, Any] = {}
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        self.attributes[key] = value
 
 
 class ObservabilityAdapter(Protocol):
@@ -54,6 +66,9 @@ class ObservabilityAdapter(Protocol):
 
 
 class NoopObservabilityAdapter:
+    def __init__(self, trace_level: TraceLevel = "detailed") -> None:
+        self._trace_level = trace_level
+
     def start(self) -> None:
         return None
 
@@ -104,9 +119,23 @@ class NoopObservabilityAdapter:
         }
         if policy_id:
             attributes["guardrail.policy_id"] = policy_id
-        return trace.get_tracer("traccia_runtime.guardrails").start_as_current_span(
-            f"guardrail.{name}", attributes=attributes
-        )
+        tracer = trace.get_tracer("traccia_runtime.guardrails")
+        if self._trace_level == "detailed":
+            return tracer.start_as_current_span(f"guardrail.{name}", attributes=attributes)
+
+        @contextmanager
+        def triggered_only_scope() -> Any:
+            deferred = _DeferredGuardrailSpan()
+            yield deferred
+            if deferred.attributes.get("guardrail.triggered") is not True:
+                return
+            with tracer.start_as_current_span(
+                f"guardrail.{name}", attributes=attributes
+            ) as span:
+                for key, value in deferred.attributes.items():
+                    span.set_attribute(key, value)
+
+        return triggered_only_scope()
 
     def govern(self, invocation: Any, *, agent_id: str, agent_name: str) -> Any:
         del agent_id, agent_name
@@ -119,9 +148,15 @@ class NoopObservabilityAdapter:
 class TracciaObservabilityAdapter:
     """Optional Traccia lifecycle and per-run identity bridge."""
 
-    def __init__(self, settings: TracciaSettings, service_name: str) -> None:
+    def __init__(
+        self,
+        settings: TracciaSettings,
+        service_name: str,
+        trace_level: TraceLevel = "detailed",
+    ) -> None:
         self._settings = settings
         self._service_name = service_name
+        self._trace_level = trace_level
         self._module: ModuleType | Any | None = None
         self._started = False
 
@@ -279,15 +314,33 @@ class TracciaObservabilityAdapter:
         """
         self.start()
         guardrails = importlib.import_module("traccia.guardrails")
-        return cast(
-            AbstractContextManager[Any],
-            guardrails.guardrail_span(
+        if self._trace_level == "detailed":
+            return cast(
+                AbstractContextManager[Any],
+                guardrails.guardrail_span(
+                    name,
+                    category=category,
+                    enforcement_mode=enforcement_mode,
+                    policy_id=policy_id,
+                ),
+            )
+
+        @contextmanager
+        def triggered_only_scope() -> Any:
+            deferred = _DeferredGuardrailSpan()
+            yield deferred
+            if deferred.attributes.get("guardrail.triggered") is not True:
+                return
+            with guardrails.guardrail_span(
                 name,
                 category=category,
                 enforcement_mode=enforcement_mode,
                 policy_id=policy_id,
-            ),
-        )
+            ) as span:
+                for key, value in deferred.attributes.items():
+                    span.set_attribute(key, value)
+
+        return triggered_only_scope()
 
     def govern(self, invocation: Any, *, agent_id: str, agent_name: str) -> Any:
         if not self._settings.governance_enabled:
@@ -319,5 +372,9 @@ class TracciaObservabilityAdapter:
 
 def observability_adapter(settings: TelemetrySettings) -> ObservabilityAdapter:
     if settings.traccia.enabled:
-        return TracciaObservabilityAdapter(settings.traccia, settings.service_name)
-    return NoopObservabilityAdapter()
+        return TracciaObservabilityAdapter(
+            settings.traccia,
+            settings.service_name,
+            settings.trace_level,
+        )
+    return NoopObservabilityAdapter(settings.trace_level)

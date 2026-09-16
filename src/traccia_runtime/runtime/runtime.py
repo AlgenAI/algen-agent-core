@@ -29,6 +29,7 @@ from traccia_runtime.observability.traccia_adapter import (
     NoopObservabilityAdapter,
     ObservabilityAdapter,
 )
+from traccia_runtime.observability.trace_levels import TraceLevel, TraceLevelTracer
 from traccia_runtime.planning.contracts import ActionType, PlannedAction
 from traccia_runtime.planning.planners import PlannerRegistry
 from traccia_runtime.policies.contracts import PolicyAction, PolicyDecision
@@ -83,6 +84,7 @@ class AgentRuntime:
         cache: CacheService | None = None,
         telemetry_include_content: bool = False,
         telemetry_max_content_chars: int = 16_384,
+        telemetry_trace_level: TraceLevel = "detailed",
     ) -> None:
         self.agents = agents
         self.router = router
@@ -106,7 +108,9 @@ class AgentRuntime:
         self._task_lock = asyncio.Lock()
         self._accepting_runs = True
         self._shutdown_cancellation = False
-        self._tracer = trace.get_tracer("traccia_runtime.runtime")
+        self._tracer = TraceLevelTracer(
+            trace.get_tracer("traccia_runtime.runtime"), telemetry_trace_level
+        )
         self._logger = structlog.get_logger("traccia_runtime.runtime")
 
     async def start(self, request: RunRequest) -> RunState:

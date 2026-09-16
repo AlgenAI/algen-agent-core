@@ -408,6 +408,8 @@ an insight model to reinterpret sample rows or independently calculate an answer
 
 Each user message is represented as one conversation-turn trace. Specialist agent runs are child spans, and turns share the conversation ID as the Traccia session identifier. Model calls, retrieval, query execution, analytical methods, verification, usage, cost, prompt versions, semantic versions, and cache operations remain correlated. Cache spans record hit/miss/error and timing but never keys or values.
 
+This demo sets `telemetry.trace_level: minimal` so the intentionally repeated-call sample remains easy to inspect: conversation, agent, LLM, tool, analytical, and triggered-guardrail spans are retained while internal planning, cache, and non-triggered guardrail spans are omitted. Use `standard` for policy and verification detail or `detailed` for the complete diagnostic trace.
+
 `telemetry.include_content: false` prevents general model/tool payload capture. The example separately enables capped, redacted conversation content. Set `TRACCIA_RUNTIME__TELEMETRY__INCLUDE_CONVERSATION_CONTENT=false` when conversation text must remain inside the process.
 
 Never log database credentials, access tokens, raw sensitive result sets, private reasoning, or unrestricted prompts.

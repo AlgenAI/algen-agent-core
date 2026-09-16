@@ -27,6 +27,7 @@ dependencies = [
 postgres = ["asyncpg>=0.29,<1"]
 pgvector = ["asyncpg>=0.29,<1", "pgvector>=0.3,<1"]
 talk-to-data = ["asyncpg>=0.29,<1", "pgvector>=0.3,<1", "traccia>=0.1.28,<0.2"]
+hiring = ["asyncpg>=0.29,<1", "pgvector>=0.3,<1", "PyMuPDF>=1.24,<2", "python-multipart>=0.0.9,<1", "traccia>=0.1.28,<0.2"]
 redis = ["redis>=5,<6"]
 auth = ["PyJWT[crypto]>=2.9,<3"]
 transformers = ["transformers>=4.44,<5", "torch>=2.4,<3"]
@@ -86,5 +87,5 @@ strict = true
 packages = ["traccia_runtime"]
 
 [[tool.mypy.overrides]]
-module = ["jsonschema", "yaml", "transformers", "opentelemetry.exporter.*", "asyncpg", "redis", "redis.*", "pgvector", "pgvector.*", "chromadb", "faiss", "numpy", "qdrant_client", "qdrant_client.*", "agents", "jwt"]
+module = ["jsonschema", "yaml", "transformers", "opentelemetry.exporter.*", "asyncpg", "redis", "redis.*", "pgvector", "pgvector.*", "chromadb", "faiss", "numpy", "qdrant_client", "qdrant_client.*", "agents", "jwt", "fitz"]
 ignore_missing_imports = true

@@ -17,6 +17,8 @@ from examples.talk_to_data_multi_agent.application.analytics_tools import (
     default_airline_analytics_tools,
 )
 from examples.talk_to_data_multi_agent.application.analytics_workflow import (
+    TRACE_EVALUATION_QUESTION,
+    TRACE_EVALUATION_REDUNDANT_CALLS,
     AnalyticsIntent,
     AnalyticsWorkflow,
 )
@@ -452,6 +454,57 @@ async def test_advanced_workflow_runs_bounded_specialist_pipeline() -> None:
     )
     assert len(runtime.requests[0].metadata["retrieval_query"]) < len(runtime.requests[0].input)
     assert len(result.run_ids) == 5
+
+
+async def test_trace_evaluation_question_makes_redundant_router_calls_only_for_that_sample() -> None:
+    runtime = FakeClient(
+        [analytics_intent()] * (TRACE_EVALUATION_REDUNDANT_CALLS + 1)
+        + [analytics_plan(), sql_output()]
+    )
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(event_type: str, data: dict[str, Any] | None = None) -> None:
+        events.append((event_type, data or {}))
+
+    result = await AnalyticsWorkflow(
+        runtime,
+        catalog(),
+        SemanticLayer.from_yaml(SEMANTIC_LAYER_PATH),
+        default_airline_analytics_tools(),
+        tenant_id="tenant-a",
+        user_id="user-a",
+        enable_trace_evaluation=True,
+    ).run_turn(TRACE_EVALUATION_QUESTION, [], emit=emit)
+
+    assert result.status.value == "completed"
+    assert len(runtime.requests) == TRACE_EVALUATION_REDUNDANT_CALLS + 3
+    assert [request.agent for request in runtime.requests] == (
+        ["talk-to-data-router"] * (TRACE_EVALUATION_REDUNDANT_CALLS + 1)
+        + ["talk-to-data-planner", "talk-to-data-sql"]
+    )
+    assert "trace_evaluation" not in json.loads(runtime.requests[0].input)
+    assert all(
+        json.loads(request.input)["trace_evaluation"]["scenario"]
+        == "redundant_llm_call_loop"
+        for request in runtime.requests[1 : TRACE_EVALUATION_REDUNDANT_CALLS + 1]
+    )
+    evaluation_events = [
+        data
+        for event_type, data in events
+        if event_type == "agent.status.changed"
+        and data.get("status") == "trace_evaluation_redundant_llm_call"
+    ]
+    assert [event["attempt"] for event in evaluation_events] == list(
+        range(1, TRACE_EVALUATION_REDUNDANT_CALLS + 1)
+    )
+
+    handler = TalkToDataConversationHandler(
+        SimpleNamespace(runtime=FakeClient([])),
+        catalog(),
+        SemanticLayer.from_yaml(SEMANTIC_LAYER_PATH),
+        default_airline_analytics_tools(),
+    )
+    assert TRACE_EVALUATION_QUESTION in await handler.suggestions("tenant-a", "user-a", 10)
 
 
 async def test_advanced_workflow_repairs_undefined_planner_dimension() -> None:

@@ -445,6 +445,7 @@ agents:
 telemetry:
   enabled: true
   service_name: talk-to-data-multi-agent-example
+  trace_level: minimal
   include_content: false
   include_conversation_content: true
   max_content_chars: 4096

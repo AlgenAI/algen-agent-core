@@ -354,7 +354,7 @@
 
     async function loadSuggestions() {
       try {
-        const data = await request('/v1/conversations/suggestions?handler=talk-to-data');
+        const data = await request('/v1/conversations/suggestions?handler=talk-to-data&limit=10');
         $('suggestions').replaceChildren(...data.suggestions.map(text => { const button = element('button', 'suggestion', text); button.onclick = () => sendMessage(text); return button; }));
       } catch (error) { setOnline(false, 'Offline'); toast(error.message); }
     }

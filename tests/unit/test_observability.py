@@ -27,6 +27,7 @@ from traccia_runtime.observability.traccia_adapter import (
     TracciaObservabilityAdapter,
     observability_adapter,
 )
+from traccia_runtime.observability.trace_levels import TraceLevelTracer
 from traccia_runtime.types.contracts import RunRequest
 
 
@@ -43,6 +44,7 @@ class FakeRuntimeConfig:
 def test_traccia_configuration_is_strict_and_disabled_by_default() -> None:
     settings = AppSettings()
     assert settings.telemetry.traccia.enabled is False
+    assert settings.telemetry.trace_level == "detailed"
     assert isinstance(observability_adapter(settings.telemetry), NoopObservabilityAdapter)
     with pytest.raises(ValueError, match="env://"):
         TracciaSettings(enabled=True, api_key="literal-secret")
@@ -148,6 +150,45 @@ def test_traccia_adapter_uses_sdk_guardrail_span(
             "policy_id": "policy-1",
         },
     ) in calls
+
+
+def test_minimal_tracing_emits_only_triggered_guardrails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Any]] = []
+    fake = SimpleNamespace(
+        init=lambda **options: calls.append(("init", options)),
+        runtime_config=FakeRuntimeConfig(calls),
+        stop_tracing=lambda timeout: None,
+    )
+
+    @contextmanager
+    def guardrail_span(name: str, **attributes: Any) -> Iterator[RecordedSpan]:
+        calls.append((name, attributes))
+        yield RecordedSpan(name=name, parent=None)
+
+    guardrails = SimpleNamespace(guardrail_span=guardrail_span)
+    monkeypatch.setattr(
+        "traccia_runtime.observability.traccia_adapter.importlib.import_module",
+        lambda name: guardrails if name == "traccia.guardrails" else fake,
+    )
+    adapter = TracciaObservabilityAdapter(
+        TracciaSettings(enabled=True), "traccia-runtime-test", "minimal"
+    )
+    monkeypatch.setattr(adapter, "_register_otel_provider", lambda provider: None)
+
+    with adapter.guardrail_scope(
+        name="secrets", category="input_validation", enforcement_mode="warn"
+    ) as span:
+        span.set_attribute("guardrail.triggered", False)
+    assert not any(name == "secrets" for name, _ in calls)
+
+    with adapter.guardrail_scope(
+        name="secrets", category="input_validation", enforcement_mode="warn"
+    ) as span:
+        span.set_attribute("guardrail.triggered", True)
+        span.set_attribute("guardrail.reason_code", "secret.detected")
+    assert any(name == "secrets" for name, _ in calls)
 
 
 def test_traccia_managed_root_receives_guardrail_summary() -> None:
@@ -312,6 +353,34 @@ class RecordingTracer:
             yield span
         finally:
             self._current.pop()
+
+
+def test_trace_level_tracer_filters_internal_spans_by_configured_detail() -> None:
+    recorded = RecordingTracer()
+    minimal = TraceLevelTracer(recorded, "minimal")
+    with minimal.start_as_current_span("agent.run"):
+        with minimal.start_as_current_span("agent.planning"):
+            pass
+        with minimal.start_as_current_span("agent.model.call"):
+            pass
+        with minimal.start_as_current_span("agent.policy.input"):
+            pass
+        with minimal.start_as_current_span("cache.get"):
+            pass
+    assert [span.name for span in recorded.spans] == ["agent.run", "agent.model.call"]
+
+    recorded = RecordingTracer()
+    standard = TraceLevelTracer(recorded, "standard")
+    with standard.start_as_current_span("agent.policy.input"):
+        pass
+    with standard.start_as_current_span("agent.verification"):
+        pass
+    with standard.start_as_current_span("agent.step"):
+        pass
+    assert [span.name for span in recorded.spans] == [
+        "agent.policy.input",
+        "agent.verification",
+    ]
 
 
 async def test_runtime_emits_one_root_trace_with_traccia_semantics() -> None:

@@ -13,6 +13,7 @@ import structlog
 from opentelemetry import metrics, trace
 
 from traccia_runtime.cache.contracts import CacheContext, CachePolicy, CacheScope, CacheStore
+from traccia_runtime.observability.trace_levels import TraceLevel, TraceLevelTracer
 
 
 class CacheService:
@@ -24,13 +25,16 @@ class CacheService:
         policies: Mapping[str, CachePolicy] | None = None,
         *,
         key_secret: str | None = None,
+        telemetry_trace_level: TraceLevel = "detailed",
     ) -> None:
         self.store = store
         self._policies = dict(policies or {})
         self._secret = key_secret.encode() if key_secret else None
         self._inflight: dict[str, asyncio.Future[Any]] = {}
         self._inflight_lock = asyncio.Lock()
-        self._tracer = trace.get_tracer("traccia_runtime.cache")
+        self._tracer = TraceLevelTracer(
+            trace.get_tracer("traccia_runtime.cache"), telemetry_trace_level
+        )
         meter = metrics.get_meter("traccia_runtime.cache")
         self._operations = meter.create_counter("traccia_runtime.cache.operations")
         self._latency = meter.create_histogram(

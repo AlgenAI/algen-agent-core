@@ -23,6 +23,7 @@ from examples.talk_to_data_multi_agent.application.analytics_tools import (
     default_airline_analytics_tools,
 )
 from examples.talk_to_data_multi_agent.application.analytics_workflow import (
+    TRACE_EVALUATION_QUESTION,
     AdvancedTurnStatus,
     AnalyticsWorkflow,
 )
@@ -139,10 +140,10 @@ class TalkToDataConversationHandler:
             values = await self._suggestion_provider(tenant_id, user_id, limit)
             return tuple(values[:limit])
         return (
+            TRACE_EVALUATION_QUESTION,
             "Which routes show sustained high load factor and yield by weekday?",
             "Do forward bookings show an unexpected demand increase by flight?",
             "What is the static revenue impact of increasing average fare by 5%?",
-            "Which flights have the lowest remaining inventory?",
             "Which observable factors are correlated with weaker revenue?",
         )[:limit]
 
@@ -225,6 +226,7 @@ class TalkToDataConversationHandler:
             executor=self._executor,
             max_clarifications=self._max_clarifications,
             method_registry=getattr(self._container, "analytical_methods", None),
+            enable_trace_evaluation=True,
         )
         try:
             turn = await workflow.run_turn(

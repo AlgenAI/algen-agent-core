@@ -181,6 +181,7 @@ class TracciaSettings(StrictSettings):
 class TelemetrySettings(StrictSettings):
     enabled: bool = True
     service_name: str = "traccia-runtime"
+    trace_level: Literal["minimal", "standard", "detailed"] = "detailed"
     otlp_endpoint: str | None = None
     include_content: bool = False
     include_conversation_content: bool = False
@@ -240,6 +241,14 @@ class ConversationPresentationSettings(StrictSettings):
     technical_details_expanded: bool = False
 
 
+class ConversationFollowupSettings(StrictSettings):
+    enabled: bool = False
+    agent: str = "conversation-followups"
+    max_suggestions: int = Field(default=3, ge=1, le=10)
+    history_messages: int = Field(default=8, ge=0, le=50)
+    maximum_length: int = Field(default=240, ge=20, le=500)
+
+
 class AnalyticalExecutionSettings(StrictSettings):
     graph_store: Literal["memory", "postgres"] = "memory"
     maximum_concurrency: int = Field(default=8, ge=1, le=128)
@@ -293,6 +302,9 @@ class AppSettings(StrictSettings):
     conversation_presentation: ConversationPresentationSettings = Field(
         default_factory=ConversationPresentationSettings
     )
+    conversation_followups: ConversationFollowupSettings = Field(
+        default_factory=ConversationFollowupSettings
+    )
     analytical_execution: AnalyticalExecutionSettings = Field(
         default_factory=AnalyticalExecutionSettings
     )
@@ -315,6 +327,12 @@ class AppSettings(StrictSettings):
             and self.distributed_execution.queue_backend == "memory"
         ):
             raise ValueError("distributed execution requires a durable postgres queue_backend")
+        if self.conversation_followups.enabled and self.conversation_followups.agent not in {
+            agent.name for agent in self.agents
+        }:
+            raise ValueError(
+                "conversation follow-up generation requires its configured agent to be registered"
+            )
         return self
 
 

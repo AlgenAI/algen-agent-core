@@ -20,6 +20,14 @@ from traccia_runtime.conversations.contracts import (
     ConversationTurnResult,
     MessageStatus,
 )
+from traccia_runtime.conversations.feedback import (
+    ConversationFeedback,
+    ConversationFeedbackStore,
+    FeedbackRating,
+    InMemoryConversationFeedbackStore,
+    record_feedback,
+)
+from traccia_runtime.conversations.followups import FollowupSuggestionProvider
 from traccia_runtime.conversations.presentation import ConversationPresentation
 from traccia_runtime.events.contracts import AuditEvent
 from traccia_runtime.exceptions.errors import (
@@ -129,6 +137,8 @@ class ConversationService:
         telemetry_include_content: bool = False,
         telemetry_max_content_chars: int = 16_384,
         presentation: ConversationPresentation | None = None,
+        feedback_store: ConversationFeedbackStore | None = None,
+        followup_provider: FollowupSuggestionProvider | None = None,
     ) -> None:
         self.store = store
         self.events = events
@@ -138,6 +148,8 @@ class ConversationService:
         self._telemetry_include_content = telemetry_include_content
         self._telemetry_max_content_chars = telemetry_max_content_chars
         self.presentation = presentation or ConversationPresentation()
+        self.feedback_store = feedback_store or InMemoryConversationFeedbackStore()
+        self._followup_provider = followup_provider
         self._tracer = trace.get_tracer("traccia_runtime.conversations")
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
@@ -226,6 +238,56 @@ class ConversationService:
     ) -> Sequence[ConversationMessage]:
         await self.get(conversation_id, tenant_id)
         return await self.store.messages(conversation_id, tenant_id, limit, before)
+
+    async def feedback(
+        self, conversation_id: str, message_id: str, tenant_id: str, user_id: str
+    ) -> ConversationFeedback | None:
+        conversation = await self.get(conversation_id, tenant_id)
+        if conversation.user_id != user_id:
+            raise NotFoundError(f"conversation {conversation_id!r} not found")
+        return await self.feedback_store.get(tenant_id, user_id, message_id)
+
+    async def record_feedback(
+        self,
+        conversation_id: str,
+        message_id: str,
+        tenant_id: str,
+        user_id: str,
+        rating: FeedbackRating,
+        *,
+        category: str | None = None,
+        comment: str | None = None,
+        tags: tuple[str, ...] = (),
+    ) -> ConversationFeedback:
+        conversation = await self.get(conversation_id, tenant_id)
+        if conversation.user_id != user_id:
+            raise NotFoundError(f"conversation {conversation_id!r} not found")
+        messages = await self.store.messages(conversation_id, tenant_id, limit=1000)
+        message = next((item for item in messages if item.id == message_id), None)
+        if message is None:
+            raise NotFoundError(f"assistant message {message_id!r} not found")
+        saved = await record_feedback(
+            store=self.feedback_store,
+            conversation=conversation,
+            message=message,
+            user_id=user_id,
+            rating=rating,
+            category=category,
+            comment=comment,
+            tags=tags,
+            audits=self._audits,
+        )
+        await self._emit(
+            conversation,
+            "conversation.feedback.recorded",
+            {
+                "feedback_id": saved.id,
+                "message_id": saved.message_id,
+                "rating": saved.rating.value,
+            },
+            saved.message_id,
+        )
+        return saved
 
     async def submit(
         self,
@@ -361,9 +423,19 @@ class ConversationService:
                 "conversation.turn", context=Context(), attributes=attributes
             )
             with span_scope as span:
+                context_getter = getattr(span, "get_span_context", None)
+                span_context = context_getter() if context_getter is not None else None
+                trace_context = (
+                    {
+                        "trace_id": f"{span_context.trace_id:032x}",
+                        "span_id": f"{span_context.span_id:016x}",
+                    }
+                    if span_context is not None and span_context.is_valid
+                    else None
+                )
                 try:
                     outcome, run_ids, block_count, output_text = await self._respond_observed(
-                        conversation, user_message, assistant_message
+                        conversation, user_message, assistant_message, trace_context
                     )
                 except asyncio.CancelledError:
                     span.set_attribute("conversation.turn.status", "cancelled")
@@ -391,6 +463,7 @@ class ConversationService:
         conversation: Conversation,
         user_message: ConversationMessage,
         assistant_message: ConversationMessage,
+        trace_context: dict[str, str] | None = None,
     ) -> tuple[str, tuple[str, ...], int, str]:
         streaming = assistant_message.model_copy(
             update={"status": MessageStatus.STREAMING, "updated_at": utc_now()}
@@ -411,6 +484,32 @@ class ConversationService:
             result = await self.handlers.get(conversation.handler).handle(
                 conversation, user_message, history, emit
             )
+            suggested_followups = result.suggested_followups
+            if (
+                not suggested_followups
+                and result.outcome == "completed"
+                and self._followup_provider is not None
+            ):
+                output_text = "\n".join(
+                    str(getattr(block, "text", ""))
+                    for block in result.content
+                    if getattr(block, "text", None)
+                )
+                try:
+                    suggested_followups = await self._followup_provider.suggest(
+                        tenant_id=conversation.tenant_id,
+                        user_id=conversation.user_id,
+                        conversation_id=conversation.id,
+                        history=history,
+                        user_text=user_message.text_content,
+                        assistant_text=output_text,
+                    )
+                except Exception as exc:
+                    structlog.get_logger("traccia_runtime.conversations").warning(
+                        "conversation_followup_generation_failed",
+                        conversation_id=conversation.id,
+                        error_type=type(exc).__name__,
+                    )
             message_status = (
                 MessageStatus.FAILED if result.outcome == "failed" else MessageStatus.COMPLETED
             )
@@ -421,8 +520,11 @@ class ConversationService:
                     "run_ids": result.run_ids,
                     "artifacts": result.artifacts,
                     "citations": result.citations,
-                    "suggested_followups": result.suggested_followups,
-                    "metadata": redact(result.metadata),
+                    "suggested_followups": suggested_followups,
+                    "metadata": {
+                        **redact(result.metadata),
+                        **({"runtime_trace_context": trace_context} if trace_context else {}),
+                    },
                     "updated_at": utc_now(),
                 }
             )

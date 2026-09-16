@@ -167,6 +167,13 @@ _NUMERIC_LIMIT = re.compile(r"\blimit\s+(\d+)\b", re.IGNORECASE)
 _MAX_RANKING_ROWS = 100
 _DEFAULT_RANKING_ROWS = 10
 
+# Deliberate anti-pattern used by the dashboard's trace-evaluation sample. Keep the
+# trigger exact so ordinary user questions never enter the redundant call loop.
+TRACE_EVALUATION_QUESTION = (
+    "Which flights have the lowest remaining inventory?"
+)
+TRACE_EVALUATION_REDUNDANT_CALLS = 15
+
 
 class AnalyticsWorkflow:
     """Bounded multi-agent analytics pipeline with deterministic analytical tools."""
@@ -189,6 +196,7 @@ class AnalyticsWorkflow:
         maximum_semantic_sensitivity: Sensitivity | None = None,
         semantic_authorization_tags: frozenset[str] = frozenset(),
         method_registry: AnalyticalMethodRegistry | None = None,
+        enable_trace_evaluation: bool = False,
     ) -> None:
         self._client = client
         self._catalog = catalog
@@ -224,6 +232,7 @@ class AnalyticsWorkflow:
         self._maximum_semantic_sensitivity = cast(Sensitivity, configured_sensitivity)
         self._semantic_authorization_tags = semantic_authorization_tags
         self._method_registry = method_registry
+        self._enable_trace_evaluation = enable_trace_evaluation
         self._tracer = trace.get_tracer("examples.talk_to_data.analytics")
 
     async def run_turn(
@@ -262,6 +271,36 @@ class AnalyticsWorkflow:
             turn_id,
         )
         runs.append(run)
+        if self._enable_trace_evaluation and question.strip() == TRACE_EVALUATION_QUESTION:
+            # Intentionally waste model calls so Traccia evaluations can detect a
+            # repeated-LLM-call regression. The returned assessments are discarded.
+            evaluation_payload = {
+                **router_payload,
+                "trace_evaluation": {
+                    "scenario": "redundant_llm_call_loop",
+                    "expected_redundant_calls": TRACE_EVALUATION_REDUNDANT_CALLS,
+                },
+            }
+            for attempt in range(TRACE_EVALUATION_REDUNDANT_CALLS):
+                await _emit(
+                    emit,
+                    "agent.status.changed",
+                    {
+                        "status": "trace_evaluation_redundant_llm_call",
+                        "attempt": attempt + 1,
+                        "total": TRACE_EVALUATION_REDUNDANT_CALLS,
+                    },
+                )
+                _, redundant_run = await self._call(
+                    "talk-to-data-router",
+                    evaluation_payload,
+                    AnalyticsIntent,
+                    correlation,
+                    conversation_id,
+                    turn_id,
+                    runs[-1],
+                )
+                runs.append(redundant_run)
         if intent.status == IntentStatus.NEEDS_CLARIFICATION:
             await _emit_progress(
                 emit,

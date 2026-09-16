@@ -21,7 +21,10 @@ async def principal(
     x_tenant_id: str = Header(...),
     x_user_id: str = Header(...),
     x_scopes: str = Header(
-        default="runs:read runs:write agents:read conversations:read conversations:write"
+        default=(
+            "runs:read runs:write agents:read conversations:read conversations:write "
+            "feedback:read feedback:write"
+        )
     ),
 ) -> Principal:
     # This is an intentionally narrow authentication hook. Deployments replace it with JWT/mTLS.

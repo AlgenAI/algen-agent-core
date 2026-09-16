@@ -11,6 +11,15 @@ from traccia_runtime.conversations.contracts import (
     NoticeBlock,
     TableBlock,
 )
+from traccia_runtime.conversations.feedback import (
+    ConversationFeedback,
+    FeedbackRating,
+)
+from traccia_runtime.conversations.followups import (
+    FollowupSuggestionProvider,
+    FollowupSuggestions,
+    ModelFollowupSuggestionProvider,
+)
 from traccia_runtime.conversations.presentation import (
     ConversationPresentation,
     PresentationAudience,
@@ -27,13 +36,18 @@ __all__ = [
     "Conversation",
     "ConversationContentBlock",
     "ConversationEvent",
+    "ConversationFeedback",
     "ConversationHandlerRegistry",
     "ConversationMessage",
     "ConversationPresentation",
     "ConversationService",
     "ConversationTurnResult",
     "DetailsBlock",
+    "FeedbackRating",
+    "FollowupSuggestionProvider",
+    "FollowupSuggestions",
     "MessageStatus",
+    "ModelFollowupSuggestionProvider",
     "NoticeBlock",
     "PresentationAudience",
     "RuntimeConversationHandler",
